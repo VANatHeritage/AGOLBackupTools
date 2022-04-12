@@ -8,8 +8,6 @@ This python toolbox contains tools for copying and archiving feature services fr
 
 Usage: Import toolbox into ArcGIS Pro (Catalog -> Toolboxes (right click) -> Add Toolbox).
 """
-import arcpy
-
 from agol_backup import *
 
 
@@ -17,9 +15,8 @@ class Toolbox(object):
    def __init__(self):
       self.label = "ArcGIS Online Backup Tools"
       self.alias = "ArcGISOnlineBackupTools"
-      self.desciption = "Python toolbox with tools for maintaining regular archives of ArcGIS Online feature service " \
-                        "layers."
-
+      self.description = "Python toolbox with tools for maintaining regular archives of ArcGIS Online feature service " \
+                        "layers, and backups for location tracking feature service layers."
       # List of tool classes associated with this toolbox
       self.tools = [fs2fc, archive, fs2bkp, loc2bkp]
 
@@ -191,13 +188,13 @@ class fs2bkp(object):
          parameterType="Required",
          direction="Input")
       to_data = arcpy.Parameter(
-         displayName="Backup Feature Service Layer or Feature Class",
+         displayName="Backup Feature Service Layer or Feature Class (to update)",
          name="to_data",
          datatype="GPFeatureLayer",
          parameterType="Required",
          direction="Input")
       created_date_field = arcpy.Parameter(
-         displayName="Created Date field (used to find new rows)",
+         displayName="Created Date field",
          name="created_date_field",
          datatype="GPString",
          parameterType="Required",
