@@ -1,3 +1,4 @@
 *.xml
 backup_*
 __pycache__
+recycling
