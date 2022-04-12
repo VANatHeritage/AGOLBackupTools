@@ -5,9 +5,10 @@ Created on: 2021-01-26
 Version: ArcGIS Pro / Python 3.x
 
 This script contains functions for copying/archiving feature services from ArcGIS online. The processes are imported
-by a python toolbox for use in ArcGIS Pro, but can also be used interactively in this script.
+by a python toolbox for use in ArcGIS Pro, but can also be used interactively in this script, which could be set up to
+run on a schedule (e.g. with Windows Task Scheduler).
 
-Tools include:
+Main tools include:
 - GetFeatServAll: Copies one or more layers from a feature service to feature classes in a geodatabase.
 - ArchiveServices: Archives feature services listed as URLs in a text file, meant to be used to regularly to maintain
    backups (one-per-day and one-per-month). Includes processes to delete backups older than specified limits.
@@ -80,7 +81,7 @@ def fieldMappings(lyr, oid_agol=True):
    return fms
 
 
-def GetFeatServAll(url, gdb, fc, oid_agol=True, query=None):
+def GetFeatServAll(url, gdb, fc, oid_agol=True):
    """Copy a feature service layer from ArcGIS Online to feature class.
    :param url: Url of the feature service layer (including index number) to download
    :param gdb: Output geodatabase
@@ -353,7 +354,7 @@ def prep_track_pts(in_pts, by_session=True, break_tracks_seconds=600):
    or user.
    :param in_pts: Input track points
    :param by_session: If True, will use 'session_id' to assign unique track line ID. If False, 'full_name' is used.
-   :param break_tracks_seconds: duration in seconds, where breaks collection of points greater than this will result
+   :param break_tracks_seconds: duration in seconds, where a break in collection of points greater than this will result
    in a new track line ID (regardless of session or user). Default = 600 = 10 minutes.
    :return:
    """
@@ -361,13 +362,18 @@ def prep_track_pts(in_pts, by_session=True, break_tracks_seconds=600):
    flds = ['use', 'unique_track_id']
    arcpy.DeleteField_management(in_pts, flds)
    fn = '''def pt_use(horiz, speed, course):
+      if speed is None:
+         speed = -1
+      if course is None:
+         course = -1
       if horiz <= 10:
          return 1
-      if horiz <= 25 and (speed >= 0 or course >= 0):
+      elif horiz <= 25 and (speed >= 0 or course >= 0):
          return 1
-      if speed >= 0 and course >= 0:
+      elif speed >= 0 and course >= 0:
          return 1
-      return 0
+      else:
+         return 0
    '''
    arcpy.CalculateField_management(in_pts, 'use', 'pt_use(!horizontal_accuracy!, !speed!, !course!)', code_block=fn,
                                    field_type="SHORT")
@@ -436,8 +442,8 @@ def make_track_lines(in_pts, out_track_lines):
 
 def main():
    """
-   Example archive procedure. This script be scheduled to run on a daily basis (e.g with Windows Task Scheduler), by
-   executing a '.bat' file with the following command:
+   Example archive procedure. This script could be scheduled to run on a daily basis (e.g with Windows Task Scheduler),
+   by executing a '.bat' file with the following command:
    "C:\Program Files\ArcGIS\Pro\bin\Python\Scripts\propy.bat" "C:\path_to\AGOLBackupTools\agol_backup.py"
    """
    # portal = loginAGOL('username')
