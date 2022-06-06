@@ -8,7 +8,7 @@ This python toolbox contains tools for copying and archiving feature services fr
 
 Usage: Import toolbox into ArcGIS Pro (Catalog -> Toolboxes (right click) -> Add Toolbox).
 """
-from agol_backup import *
+from AGOLBackupTools_helper import *
 
 
 class Toolbox(object):
@@ -115,13 +115,13 @@ class fs2fc(object):
 class archive(object):
    def __init__(self):
       self.label = "Archive Feature Services by URL"
-      self.description = "Given a list of URLS in a text file, and an archive folder, archives feature service. Will " \
-                         "use existing geodatabases in the folder if they already exist, or create a new one if it " \
-                         "doesn't exist. One-per-day and one-per-month archives are saved. Daily and monthly " \
-                         "archives older than the specified limits are deleted."
+      self.description = "Given a list of URLS in a text file (one per line), and an archive folder, archives " \
+                         "feature service layers. Will use existing geodatabases in the folder if they already " \
+                         "exist, or create a new one if it doesn't exist. One-per-day and one-per-month archives " \
+                         "are saved. Daily and monthly archives older than the specified limits are deleted."
    def getParameterInfo(self):
       urls = arcpy.Parameter(
-         displayName="Text file list of feature service URLs",
+         displayName="Text file with list of feature service URLs",
          name="urls",
          datatype="DEFile",
          parameterType="Required",
@@ -233,10 +233,10 @@ class fs2bkp(object):
 class loc2bkp(object):
    def __init__(self):
       self.label = "Update Backups of Track Points and Track Lines"
-      self.description = "Compares a track points feature service layer to an existing track points feature class " \
-                         "backup. Using a date created field to find rows not present in the backup," \
-                         " copies the new rows from the source to the backup. It then builds track lines for new " \
-                         "the updated points, and appends the lines to the backup track lines layer " \
+      self.description = "Compares a track points feature service layer to an existing track points feature class or " \
+                         "feature service layer backup. Using a date created field to find rows not present in the " \
+                         "backup copies the new rows from the source to the backup. It then builds track lines for " \
+                         "new the updated points, and appends the lines to the backup track lines layer " \
                          "(feature class or feature service layer)."
    def getParameterInfo(self):
       web_pts = arcpy.Parameter(
@@ -260,6 +260,7 @@ class loc2bkp(object):
          parameterType="Required",
          direction="Input")
       lines.filter.list = ["Polyline"]
+      # coulddo: add argument for break_tracks_seconds value?
       parameters = [web_pts, loc_pts, lines]
       return parameters
 
@@ -280,33 +281,47 @@ class loc2bkp(object):
       web_pts = parameters[0].valueAsText
       loc_pts = parameters[1].valueAsText
       lines = parameters[2].valueAsText
-      arcpy.AddMessage('Getting new points for ' + loc_pts + '.')
+      arcpy.AddMessage('Looking for new points in ' + web_pts + '.')
       new_pts = 'tmp_' + os.path.basename(loc_pts)
       ServToBkp(web_pts, loc_pts, created_date_field="created_date", append_data=new_pts)
       # If there is new data, update track lines.
       if arcpy.GetCount_management(new_pts)[0] != '0':
-         # Take ALL track points from sessions with any new points, copy them, then delete those points from the master layer.
+         # Take ALL track points from sessions with any new points, copy them
          sess = list(set([a[0] for a in arcpy.da.SearchCursor(new_pts, 'session_id')]))
          lyr_pt = arcpy.MakeFeatureLayer_management(loc_pts)
          arcpy.SelectLayerByAttribute_management(lyr_pt, 'NEW_SELECTION', "session_id IN ('" + "','".join(sess) + "')")
          arcpy.CopyFeatures_management(lyr_pt, 'tmp_pts')
+         # delete those points from the local layer.
          arcpy.DeleteRows_management(lyr_pt)
          del lyr_pt
          print("Making new track lines for " + arcpy.GetCount_management('tmp_pts')[0] + " points.")
-         prep_track_pts('tmp_pts')
+         prep_track_pts('tmp_pts', break_tracks_seconds=600)
          make_track_lines('tmp_pts', 'tmp_lines')
-         # Now that lines are made, append points to master points layer
+         # Now that lines are made, append points back to local points layer
          arcpy.Append_management('tmp_pts', loc_pts, "NO_TEST")
+         # exit now if no lines were generated (e.g. only one point for track line)
+         if arcpy.GetCount_management('tmp_lines')[0] == '0':
+            print("No track lines generated, no updates to be made.")
+            return
          # Remove existing lines, by session
+         arcpy.AddMessage("Updating track lines layer...")
          lyr = arcpy.MakeFeatureLayer_management(lines)
          arcpy.SelectLayerByAttribute_management(lyr, "NEW_SELECTION", "session_id IN ('" + "','".join(sess) + "')")
          arcpy.DeleteRows_management(lyr)
          del lyr
-         # Append new rows to the lines layer
-         arcpy.Append_management('tmp_lines', lines)
+         # Check if spatial references are the same. If not, project new data to match the destination layer.
+         sr0 = arcpy.Describe('tmp_lines').spatialReference.name
+         sr1 = arcpy.Describe(lines).spatialReference.name
+         if sr0 != sr1:
+            arcpy.AddMessage("Projecting lines...")
+            arcpy.Project_management('tmp_lines', 'tmp_lines_proj', lines)
+            arcpy.Append_management('tmp_lines_proj', lines, "NO_TEST")
+         else:
+            arcpy.Append_management('tmp_lines', lines, "NO_TEST")
       else:
          arcpy.AddMessage("No new data, no updates made.")
       return lines
 
 
 # end
+

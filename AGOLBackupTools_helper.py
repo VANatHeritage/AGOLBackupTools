@@ -1,5 +1,5 @@
 """
-agol_backup.py
+AGOLBackupTools_helper.py
 Author: David Bucklin
 Created on: 2021-01-26
 Version: ArcGIS Pro / Python 3.x
@@ -26,12 +26,14 @@ import getpass
 import pandas as pd
 import time
 import numpy
+import base64
 
 
-def loginAGOL(user, portal=None):
+def loginAGOL(user=None, credentials=None, portal=None):
    """
    Check if logged in, and if not, log in to an ArcGIS online portal (e.g. ArcGIS Online). Will prompt for password.
-   :param user: Username for portal
+   :param user: User name for portal. Will be used (including prompt for password) if credentials are not supplied.
+   :param credentials: Credentials file (username and encoded password)
    :param portal: (optional) Portal webpage. Generally should not be used, as arcpy.GetActivePortalURL() will pull
    the default portal (i.e. ArcGIS online).
    :return:
@@ -40,16 +42,23 @@ def loginAGOL(user, portal=None):
       portal = arcpy.GetActivePortalURL()
    ct = 0
    while arcpy.GetPortalInfo()['organization'] == '' and ct < 5:
-      print('Signing in...')
-      try:
-         arcpy.SignInToPortal(portal, user, getpass.getpass("Password: ", False))
-      except:
-         ct += 1
-         print('Incorrect password, ' + str(5 - ct) + ' tries left.')
-      else:
-         print('Signed in to ' + arcpy.GetPortalInfo()['organization'] + '.')
+      if credentials:
+         with open(credentials) as f:
+            cred = [line.splitlines()[0] for line in f]
+         print('Using credentials file to connect to `' + portal + '` with username `' + cred[0] + '`...')
+         arcpy.SignInToPortal(portal, cred[0], password=base64.b64decode(cred[1]).decode("utf-8"))
+         ct = 5
+      elif user:
+         print('Signing in with username `' + user + '`...')
+         try:
+            arcpy.SignInToPortal(portal, user, getpass.getpass("Password: ", False))
+         except:
+            ct += 1
+            print('Incorrect password, ' + str(5 - ct) + ' tries left.')
    if arcpy.GetPortalInfo()['organization'] == '':
       raise ValueError("Log-in failed.")
+   else:
+      print('Signed in to ' + arcpy.GetPortalInfo()['organization'] + '.')
    return arcpy.GetPortalInfo()['organization']
 
 
@@ -206,16 +215,15 @@ def ArchiveServices(url_file, backup_folder, old_daily=10, old_monthly=12):
    return True
 
 
-def ServToBkp(from_data, to_data, created_date_field="created_date", append_data=None, append=True):
+def ServToBkp(from_data, to_data, created_date_field="created_date", append_data=None):
    """
    Using a 'created_date' field to find new records, update a copy of a feature service layer (either another service
     layer or a local feature class), by appending new data from the feature service layer.
    :param from_data: Url of feature service / class to copy from
    :param to_data: Url of feature service / class to copy to
-   :param created_date_field: Field name of date field used to identify new rows
-   :param append_data: Name of feature class holding new append data. Use if you want to use/save this data separately.
-   :param append: Whether to append data to to_data, or just return new data.
-      If you need to alter data before the append, this should be used with append=False.
+   :param created_date_field: Field name of date field which is used to identify new rows
+   :param append_data: Name of new feature class to create with data being appended. By default this is temp data, but
+      this can be used to save this data.
    :return: url_to
    """
    if append_data is None:
@@ -254,18 +262,16 @@ def ServToBkp(from_data, to_data, created_date_field="created_date", append_data
    with arcpy.EnvManager(overwriteOutput=True):
       lyr = arcpy.MakeFeatureLayer_management(from_data)
       fms = fieldMappings(lyr)  # Adds the OBJECTID_AGOL field, mapping from original OBJECTID
-      arcpy.FeatureClassToFeatureClass_conversion(from_data, os.path.dirname(append_data), os.path.basename(append_data), query, fms)
+      arcpy.FeatureClassToFeatureClass_conversion(from_data, os.path.dirname(append_data),
+                                                  os.path.basename(append_data), query, fms)
    ct = arcpy.GetCount_management(append_data).getOutput(0)
    if ct == '0':
       arcpy.AddMessage("No new data to append.")
    else:
       for r in repl:
          arcpy.AlterField_management(append_data, r[0], r[1], clear_field_alias=False)
-      if append:
-         arcpy.AddMessage("Appending " + ct + " new rows...")
-         arcpy.Append_management(append_data, to_data, 'NO_TEST')
-      else:
-         print("append=False, not appending data.")
+      arcpy.AddMessage("Appending " + ct + " new rows...")
+      arcpy.Append_management(append_data, to_data, 'NO_TEST')
    arcpy.AddMessage("Finished.")
    return to_data
 
@@ -377,7 +383,7 @@ def prep_track_pts(in_pts, by_session=True, break_tracks_seconds=600):
    '''
    arcpy.CalculateField_management(in_pts, 'use', 'pt_use(!horizontal_accuracy!, !speed!, !course!)', code_block=fn,
                                    field_type="SHORT")
-   # Get data frame of points. Since this is to define continuous tracking, it seems better to use all points (not just use = 1).
+   # Get data frame of points. Since this is to define continuous tracking, it seems better to use all points.
    if by_session:
       break_by = 'session_id'
    else:
@@ -394,8 +400,9 @@ def prep_track_pts(in_pts, by_session=True, break_tracks_seconds=600):
    # switch indicates start of new track_id
    df['switch'] = numpy.where(df['diff'] > break_tracks_seconds, 1, 0)
    df['track_id'] = df['switch'].cumsum()
-   df.to_csv('tmp_tracks.csv')
-   JoinFast(in_pts, 'OBJECTID', 'tmp_tracks.csv', 'OBJECTID', ['track_id'])
+   csv = arcpy.env.scratchFolder + os.sep + 'tmp_tracks.csv'
+   df.to_csv(csv)
+   JoinFast(in_pts, 'OBJECTID', csv, 'OBJECTID', ['track_id'])
    print('Done.')
    return in_pts
 
@@ -434,6 +441,9 @@ def make_track_lines(in_pts, out_track_lines):
    dur = 'round((!end_time!.timestamp() - !start_time!.timestamp()) / 60, 2)'
    arcpy.CalculateField_management('tmp_track_stats', 'duration_minutes', dur, field_type="FLOAT")
    flds = [a.name for a in arcpy.ListFields('tmp_track_stats') if not a.name in ['OBJECTID', 'track_id']]
+   if arcpy.GetCount_management(out_track_lines)[0] == '0':
+      print("No track lines generated, exiting.")
+      return out_track_lines
    JoinFast(out_track_lines, 'track_id', 'tmp_track_stats', 'track_id', flds)
    arcpy.CalculateGeometryAttributes_management(out_track_lines, "distance_covered_meters LENGTH_GEODESIC", "METERS")
    return out_track_lines
@@ -444,7 +454,7 @@ def main():
    """
    Example archive procedure. This script could be scheduled to run on a daily basis (e.g with Windows Task Scheduler),
    by executing a '.bat' file with the following command:
-   "C:\Program Files\ArcGIS\Pro\bin\Python\Scripts\propy.bat" "C:\path_to\AGOLBackupTools\agol_backup.py"
+   "C:\Program Files\ArcGIS\Pro\bin\Python\Scripts\propy.bat" "C:\path_to\AGOLBackupTools\AGOLBackupTools_helper.py"
    """
    # portal = loginAGOL('username')
    # backup_folder = r"C:\path_to\backup_folder"
