@@ -18,7 +18,7 @@ class Toolbox(object):
       self.description = "Python toolbox with tools for maintaining regular archives of ArcGIS Online feature service " \
                         "layers, and backups for location tracking feature service layers."
       # List of tool classes associated with this toolbox
-      self.tools = [fs2fc, archive, fs2bkp, loc2bkp]
+      self.tools = [fs2fc, archive, fs2bkp, loc2newbkp, loc2bkp]
 
 
 class fs2fc(object):
@@ -27,6 +27,7 @@ class fs2fc(object):
       self.description = "Download one or more feature layers (and/or tables) from a feature service. This function " \
                          "will attempt to download the full dataset for large feature layers/tables (no limitation " \
                          "on number of rows)."
+      self.category = "General Backup Tools"
 
    def getParameterInfo(self):
       url = arcpy.Parameter(
@@ -119,6 +120,8 @@ class archive(object):
                          "feature service layers. Will use existing geodatabases in the folder if they already " \
                          "exist, or create a new one if it doesn't exist. One-per-day and one-per-month archives " \
                          "are saved. Daily and monthly archives older than the specified limits are deleted."
+      self.category = "General Backup Tools"
+
    def getParameterInfo(self):
       urls = arcpy.Parameter(
          displayName="Text file with list of feature service URLs",
@@ -180,6 +183,7 @@ class fs2bkp(object):
       self.description = "Compares a source feature service layer to an existing backup feature service " \
                          "layer or feature class. Using a date created field to find rows not present in the backup," \
                          " copies the new rows from the source to the backup."
+      self.category = "General Backup Tools"
    def getParameterInfo(self):
       from_data = arcpy.Parameter(
          displayName="Source Feature Service Layer",
@@ -226,42 +230,119 @@ class fs2bkp(object):
       from_data = parameters[0].valueAsText
       to_data = parameters[1].valueAsText
       created_date_field = parameters[2].value
+      # from_path = arcpy.Describe(from_data).catalogPath
+      # to_path = arcpy.Describe(to_data).catalogPath
       ServToBkp(from_data, to_data, created_date_field)
       return to_data
 
 
+class loc2newbkp(object):
+   def __init__(self):
+      self.label = "Create New Backups for Track Points and Lines"
+      self.description = "Copies data from an existing track points feature service layer to a new feature class. " \
+                         "Points are attributed with a 'use' column, indicating if they should be used to generate " \
+                         "track lines. Lines are then generated from these points. These layers (or feature " \
+                         "services generated from them) can then be used as the backup layer inputs to the " \
+                         "'Update Backups of Track Points and Track Lines' tool."
+      self.category = "Location Tracking Backup Tools"
+
+   def getParameterInfo(self):
+      web_pts = arcpy.Parameter(
+         displayName="Source Track Points Feature Service Layer",
+         name="web_pts",
+         datatype="GPFeatureLayer",
+         parameterType="Required",
+         direction="Input")
+      web_pts.filter.list = ["Point"]
+      # Ouptut (to create new)
+      loc_pts_new = arcpy.Parameter(
+         displayName="Backup Track Points Feature Class (to create)",
+         name="loc_pts_new",
+         datatype="DEFeatureClass",
+         parameterType="Required",
+         direction="Output")
+      lines_new = arcpy.Parameter(
+         displayName="Backup Track Lines (to create)",
+         name="lines_new",
+         datatype="DEFeatureClass",
+         parameterType="Required",
+         direction="Output")
+      break_tracks_seconds = arcpy.Parameter(
+         displayName="Track lines time gap (seconds)",
+         name="break",
+         datatype="GPLong",
+         parameterType="Required",
+         direction="Input")
+      break_tracks_seconds.value = 600
+      # coulddo: add argument for break_tracks_seconds value?
+      parameters = [web_pts, loc_pts_new, lines_new, break_tracks_seconds]
+      return parameters
+
+   def isLicensed(self):  # optional
+      if arcpy.GetPortalInfo()['organization'] != '':
+         return True  # tool can be executed
+      else:
+         raise ValueError("No ArcGIS Online connection, are you logged in?")
+
+   def updateParameters(self, parameters):
+      return
+
+   def updateMessages(self, parameters):  # optional
+      return
+
+   def execute(self, parameters, messages):
+      arcpy.env.workspace = arcpy.env.scratchGDB
+      web_pts = parameters[0].valueAsText
+      loc_pts = parameters[1].valueAsText
+      lines = parameters[2].valueAsText
+      break_tracks_seconds = int(parameters[3].valueAsText)
+      arcpy.AddMessage("Creating new backup layers...")
+      GetFeatServAll(web_pts, os.path.dirname(loc_pts), os.path.basename(loc_pts))
+      prep_track_pts(loc_pts, by_session=True, break_tracks_seconds=break_tracks_seconds)
+      make_track_lines(loc_pts, lines)
+      return loc_pts, lines
+
+
 class loc2bkp(object):
    def __init__(self):
-      self.label = "Update Backups of Track Points and Track Lines"
+      self.label = "Update Existing Backups of Track Points and Lines"
       self.description = "Compares a track points feature service layer to an existing track points feature class or " \
                          "feature service layer backup. Using a date created field to find rows not present in the " \
                          "backup copies the new rows from the source to the backup. It then builds track lines for " \
                          "new the updated points, and appends the lines to the backup track lines layer " \
                          "(feature class or feature service layer)."
+      self.category = "Location Tracking Backup Tools"
+
    def getParameterInfo(self):
       web_pts = arcpy.Parameter(
          displayName="Source Track Points Feature Service Layer",
          name="web_pts",
-         datatype="DEFeatureClass",
+         datatype="GPFeatureLayer",
          parameterType="Required",
          direction="Input")
       web_pts.filter.list = ["Point"]
       loc_pts = arcpy.Parameter(
          displayName="Backup Track Points Feature Class (to update)",
          name="loc_pts",
-         datatype="DEFeatureClass",
+         datatype="GPFeatureLayer",
          parameterType="Required",
          direction="Input")
       loc_pts.filter.list = ["Point"]
       lines = arcpy.Parameter(
          displayName="Backup Track Lines (to update)",
          name="lines",
-         datatype="DEFeatureClass",
+         datatype="GPFeatureLayer",
          parameterType="Required",
          direction="Input")
       lines.filter.list = ["Polyline"]
-      # coulddo: add argument for break_tracks_seconds value?
-      parameters = [web_pts, loc_pts, lines]
+      break_tracks_seconds = arcpy.Parameter(
+         displayName="Track lines time gap (seconds)",
+         name="break",
+         datatype="GPLong",
+         parameterType="Required",
+         direction="Input")
+      break_tracks_seconds.value = 600
+      parameters = [web_pts, loc_pts, lines, break_tracks_seconds]
       return parameters
 
    def isLicensed(self):  # optional
@@ -281,6 +362,7 @@ class loc2bkp(object):
       web_pts = parameters[0].valueAsText
       loc_pts = parameters[1].valueAsText
       lines = parameters[2].valueAsText
+      break_tracks_seconds = int(parameters[3].valueAsText)
       arcpy.AddMessage('Looking for new points in ' + web_pts + '.')
       new_pts = 'tmp_' + os.path.basename(loc_pts)
       ServToBkp(web_pts, loc_pts, created_date_field="created_date", append_data=new_pts)
@@ -295,7 +377,7 @@ class loc2bkp(object):
          arcpy.DeleteRows_management(lyr_pt)
          del lyr_pt
          print("Making new track lines for " + arcpy.GetCount_management('tmp_pts')[0] + " points.")
-         prep_track_pts('tmp_pts', break_tracks_seconds=600)
+         prep_track_pts('tmp_pts', by_session=True, break_tracks_seconds=break_tracks_seconds)
          make_track_lines('tmp_pts', 'tmp_lines')
          # Now that lines are made, append points back to local points layer
          arcpy.Append_management('tmp_pts', loc_pts, "NO_TEST")

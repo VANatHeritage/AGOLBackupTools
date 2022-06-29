@@ -55,6 +55,8 @@ def loginAGOL(user=None, credentials=None, portal=None):
          except:
             ct += 1
             print('Incorrect password, ' + str(5 - ct) + ' tries left.')
+      else:
+         print("Need to provide username or credentials file.")
    if arcpy.GetPortalInfo()['organization'] == '':
       raise ValueError("Log-in failed.")
    else:
@@ -356,12 +358,12 @@ def arcgis_table_to_df(in_fc, input_fields=None, query=""):
 def prep_track_pts(in_pts, by_session=True, break_tracks_seconds=600):
    """
    Function to prepare tracking points for making track lines. Includes assignment of a 'use' column indicating points
-   to use in track lines (i.e. points will acceptable accuracy), as well as a unique track line ID, either by session
+   to use in track lines (i.e. points with acceptable accuracy), as well as a unique track line ID, either by session
    or user.
    :param in_pts: Input track points
-   :param by_session: If True, will use 'session_id' to assign unique track line ID. If False, 'full_name' is used.
+   :param by_session: If True, will use 'session_id' to assign unique track line ID. If False, 'full_name' (i.e. user name) is used.
    :param break_tracks_seconds: duration in seconds, where a break in collection of points greater than this will result
-   in a new track line ID (regardless of session or user). Default = 600 = 10 minutes.
+   in a new track line ID (regardless of session or user). Default = 600 seconds = 10 minutes.
    :return:
    """
    print("Prepping track points...")
@@ -383,7 +385,7 @@ def prep_track_pts(in_pts, by_session=True, break_tracks_seconds=600):
    '''
    arcpy.CalculateField_management(in_pts, 'use', 'pt_use(!horizontal_accuracy!, !speed!, !course!)', code_block=fn,
                                    field_type="SHORT")
-   # Get data frame of points. Since this is to define continuous tracking, it seems better to use all points.
+   # Get data frame of points. Since this is to define continuous tracking, it seems better to use all points, even if use = 0.
    if by_session:
       break_by = 'session_id'
    else:
@@ -403,13 +405,13 @@ def prep_track_pts(in_pts, by_session=True, break_tracks_seconds=600):
    csv = arcpy.env.scratchFolder + os.sep + 'tmp_tracks.csv'
    df.to_csv(csv)
    JoinFast(in_pts, 'OBJECTID', csv, 'OBJECTID', ['track_id'])
-   print('Done.')
+   print('Point attributes calculated.')
    return in_pts
 
 
 def make_track_lines(in_pts, out_track_lines):
    """
-   :param in_pts: Input track points, after run through prep_track_pts
+   :param in_pts: Input track points, processed with prep_track_pts
    :param out_track_lines: Output track lines
    :return: out_track_lines
    See: https://doc.arcgis.com/en/tracker/help/use-tracks.htm, which describes the default Track_Lines created on
@@ -447,7 +449,6 @@ def make_track_lines(in_pts, out_track_lines):
    JoinFast(out_track_lines, 'track_id', 'tmp_track_stats', 'track_id', flds)
    arcpy.CalculateGeometryAttributes_management(out_track_lines, "distance_covered_meters LENGTH_GEODESIC", "METERS")
    return out_track_lines
-
 
 
 def main():
