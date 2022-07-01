@@ -118,6 +118,7 @@ def GetFeatServAll(url, gdb, fc, oid_agol=True):
    e = 1
    while ctupd < ctall:
       oidmax = max([o for o in arcpy.da.SearchCursor(fcout, "OBJECTID_AGOL")])[0]
+      ctupd0 = int(arcpy.GetCount_management(fcout)[0])
       try:
          arcpy.Append_management(url, fcout, expression="OBJECTID > " + str(oidmax), schema_type="NO_TEST", field_mapping=fms.exportToString())
       except:
@@ -127,8 +128,16 @@ def GetFeatServAll(url, gdb, fc, oid_agol=True):
             break
          else:
             arcpy.AddMessage('Server or append error, will keep trying (' + str(e) + ' of 5)...')
-      ctupd = int(arcpy.GetCount_management(fcout)[0])
-      arcpy.AddMessage("Done with " + str(ctupd) + " rows.")
+      else:
+         # If no append error, check if records were actually added. If not, exit loop.
+         ctupd = int(arcpy.GetCount_management(fcout)[0])
+         arcpy.AddMessage("Done with " + str(ctupd) + " rows.")
+         if ctupd0 == ctupd:
+            break
+   if ctupd != ctall:
+      arcpy.AddWarning("Number of records downloaded (" + str(ctupd) +
+                       ") did not match original count of records in the feature service layer (" + str(ctall) + ")."
+                       "\nThis could happen due to download errors, or if the service layer is actively being updated.")
    return fcout
 
 
@@ -250,22 +259,35 @@ def ServToBkp(from_data, to_data, created_date_field="created_date", append_data
    repl = []
    for d in d1_miss:
       if d + '_' in d2_miss:
-         print('Will send values from `' + d + '` to field `' + d + '_`.')
+         arcpy.AddMessage('Will send values from `' + d + '` to field `' + d + '_`.')
          repl.append([d, d + '_'])
-   # Get maximium date from d2, add one second.
+   # Get maximium date from d2.
    if arcpy.GetCount_management(to_data)[0] == '0':
-      print("No data exists in the copy dataset")
-      last_date2 = datetime.datetime.today() - timedelta(days=365)
+      last_date = datetime.datetime.today() - timedelta(days=365)
+      arcpy.AddMessage("No data exists in the copy dataset, will pull all data with created date after " + str(last_date) + "...")
    else:
       last_date = max([a[0] for a in arcpy.da.SearchCursor(to_data, created_date_field)])
-      last_date2 = last_date + timedelta(seconds=1)
-   query = created_date_field + " >= timestamp '" + last_date2.strftime("%Y-%m-%d %H:%M:%S") + "'"
+   # Note that this query will also select records EQUAL to the last_date.
+   query = created_date_field + " >= timestamp '" + last_date.strftime("%Y-%m-%d %H:%M:%S") + "'"
    # Copy new data from the feature service
    with arcpy.EnvManager(overwriteOutput=True):
       lyr = arcpy.MakeFeatureLayer_management(from_data)
       fms = fieldMappings(lyr)  # Adds the OBJECTID_AGOL field, mapping from original OBJECTID
       arcpy.FeatureClassToFeatureClass_conversion(from_data, os.path.dirname(append_data),
                                                   os.path.basename(append_data), query, fms)
+   ct = arcpy.GetCount_management(append_data).getOutput(0)
+   if ct != '0':
+      arcpy.AddMessage(ct + " records pulled, checking for duplicates...")
+      # This compares OBJECTID_AGOL from in backup to append_data, and deletes rows in append_data already in to_data.
+      # NOTE: simple '=' in query below does not work, that is why '>=' is used.
+      query = created_date_field + " >= timestamp '" + last_date.strftime("%Y-%m-%d %H:%M:%S") + "'"
+      lyr_to = arcpy.MakeFeatureLayer_management(to_data, where_clause=query)
+      to_oids = [a[0] for a in arcpy.da.SearchCursor(lyr_to, 'OBJECTID_AGOL')]
+      with arcpy.da.UpdateCursor(append_data, 'OBJECTID_AGOL') as curs:
+         for r in curs:
+            if r[0] in to_oids:
+               curs.deleteRow()
+   # Get new count
    ct = arcpy.GetCount_management(append_data).getOutput(0)
    if ct == '0':
       arcpy.AddMessage("No new data to append.")
@@ -364,9 +386,12 @@ def prep_track_pts(in_pts, by_session=True, break_tracks_seconds=600):
    :param by_session: If True, will use 'session_id' to assign unique track line ID. If False, 'full_name' (i.e. user name) is used.
    :param break_tracks_seconds: duration in seconds, where a break in collection of points greater than this will result
    in a new track line ID (regardless of session or user). Default = 600 seconds = 10 minutes.
-   :return:
+   :return: in_pts
+
+   Borrowed point inclusion logic from here:
+   https://github.com/Esri/tracker-scripts/blob/master/notebooks/examples/Create%20Track%20Lines%20From%20Points.ipynb
    """
-   print("Prepping track points...")
+   arcpy.AddMessage("Prepping track points...")
    flds = ['use', 'unique_track_id']
    arcpy.DeleteField_management(in_pts, flds)
    fn = '''def pt_use(horiz, speed, course):
@@ -405,7 +430,7 @@ def prep_track_pts(in_pts, by_session=True, break_tracks_seconds=600):
    csv = arcpy.env.scratchFolder + os.sep + 'tmp_tracks.csv'
    df.to_csv(csv)
    JoinFast(in_pts, 'OBJECTID', csv, 'OBJECTID', ['track_id'])
-   print('Point attributes calculated.')
+   arcpy.AddMessage('Point attributes calculated.')
    return in_pts
 
 
@@ -418,7 +443,7 @@ def make_track_lines(in_pts, out_track_lines):
    ArcGIS online. This process builds a lines similar to the Track_Lines dataset, but generates lines only for use=1
    points (identified in prep_track_pts), and a select set of attributes (see line_flds).
    """
-   print("Making track lines from use = 1 points...")
+   arcpy.AddMessage("Making track lines from use = 1 points...")
    # Make track lines from use = 1 points.
    lyr = arcpy.MakeFeatureLayer_management(in_pts, where_clause='use = 1')
    arcpy.PointsToLine_management(lyr, out_track_lines, 'track_id', 'location_timestamp')
@@ -444,7 +469,7 @@ def make_track_lines(in_pts, out_track_lines):
    arcpy.CalculateField_management('tmp_track_stats', 'duration_minutes', dur, field_type="FLOAT")
    flds = [a.name for a in arcpy.ListFields('tmp_track_stats') if not a.name in ['OBJECTID', 'track_id']]
    if arcpy.GetCount_management(out_track_lines)[0] == '0':
-      print("No track lines generated, exiting.")
+      arcpy.AddMessage("No track lines generated, exiting.")
       return out_track_lines
    JoinFast(out_track_lines, 'track_id', 'tmp_track_stats', 'track_id', flds)
    arcpy.CalculateGeometryAttributes_management(out_track_lines, "distance_covered_meters LENGTH_GEODESIC", "METERS")
@@ -461,6 +486,11 @@ def main():
    # backup_folder = r"C:\path_to\backup_folder"
    # url_file = r'C:\path_to\urls.txt'
    # ArchiveServices(url_file, backup_folder, old_daily=10, old_monthly=12)
+
+   # arcpy.ImportToolbox(r'D:\projects\agol_backup\AGOLBackupTools\AGOLBackupTools.pyt')
+   # arcpy.ArcGISOnlineBackupTools.fs2fc(
+   #    "https://locationservices1.arcgis.com/PxUNqSbaWFvFgHnJ/arcgis/rest/services/location_tracking/FeatureServer",
+   #    "Tracks", r"D:\projects\agol_backup\scratch.gdb", "test")
 
    """
    Example 'service to backup service' procedure. This is needed for location service feature services, which 

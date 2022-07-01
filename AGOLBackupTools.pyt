@@ -80,7 +80,6 @@ class fs2fc(object):
          lyrs = [c['name'][len('L' + c['file']):] for c in d]
          parameters[1].filter.list = lyrs
          parameters[1].value = lyrs
-         parameters[3].value = os.path.basename(os.path.dirname(parameters[0].valueAsText))
       return
 
    def updateMessages(self, parameters):  # optional
@@ -373,7 +372,7 @@ class loc2bkp(object):
          lyr_pt = arcpy.MakeFeatureLayer_management(loc_pts)
          arcpy.SelectLayerByAttribute_management(lyr_pt, 'NEW_SELECTION', "session_id IN ('" + "','".join(sess) + "')")
          arcpy.CopyFeatures_management(lyr_pt, 'tmp_pts')
-         # delete those points from the local layer.
+         # delete those points from the local layer, since they need to be updated
          arcpy.DeleteRows_management(lyr_pt)
          del lyr_pt
          print("Making new track lines for " + arcpy.GetCount_management('tmp_pts')[0] + " points.")
@@ -400,6 +399,8 @@ class loc2bkp(object):
             arcpy.Append_management('tmp_lines_proj', lines, "NO_TEST")
          else:
             arcpy.Append_management('tmp_lines', lines, "NO_TEST")
+         ct = arcpy.GetCount_management(lines)[0]
+         arcpy.AddMessage("Appended " + ct + " new track lines.")
       else:
          arcpy.AddMessage("No new data, no updates made.")
       return lines
