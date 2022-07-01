@@ -3,6 +3,8 @@ AGOLBackupTools python toolbox
 Author: David Bucklin
 Created on: 2021-01-26
 Version: ArcGIS Pro / Python 3.x
+Toolbox version: v0.1
+Version date: 2022-07-01
 
 This python toolbox contains tools for copying and archiving feature services from ArcGIS online.
 
@@ -115,10 +117,11 @@ class fs2fc(object):
 class archive(object):
    def __init__(self):
       self.label = "Archive Feature Services by URL"
-      self.description = "Given a list of URLS in a text file (one per line), and an archive folder, archives " \
-                         "feature service layers. Will use existing geodatabases in the folder if they already " \
-                         "exist, or create a new one if it doesn't exist. One-per-day and one-per-month archives " \
-                         "are saved. Daily and monthly archives older than the specified limits are deleted."
+      self.description = "Given a list of URLS in a text file (one per line) and an archive folder, archives " \
+                         "feature service layers (downloads datestamped copies of all layers). Will use existing " \
+                         "geodatabases in the folder if they already exist, or create a new one if it doesn't exist. " \
+                         "One-per-day and one-per-month archives are maintained. Daily and monthly archives older " \
+                         "than the specified limits are deleted."
       self.category = "General Backup Tools"
 
    def getParameterInfo(self):
@@ -179,9 +182,9 @@ class archive(object):
 class fs2bkp(object):
    def __init__(self):
       self.label = "Update Backup of a Feature Service Layer"
-      self.description = "Compares a source feature service layer to an existing backup feature service " \
-                         "layer or feature class. Using a date created field to find rows not present in the backup," \
-                         " copies the new rows from the source to the backup."
+      self.description = "Compares a source feature service layer to an existing backup feature service layer or " \
+                         "feature class. Using a date created field to find rows not present in the backup, copies " \
+                         "the new rows from the source to the backup."
       self.category = "General Backup Tools"
    def getParameterInfo(self):
       from_data = arcpy.Parameter(
@@ -240,9 +243,9 @@ class loc2newbkp(object):
       self.label = "Create New Backups for Track Points and Lines"
       self.description = "Copies data from an existing track points feature service layer to a new feature class. " \
                          "Points are attributed with a 'use' column, indicating if they should be used to generate " \
-                         "track lines. Lines are then generated from these points. These layers (or feature " \
-                         "services generated from them) can then be used as the backup layer inputs to the " \
-                         "'Update Backups of Track Points and Track Lines' tool."
+                         "track lines, and lines are then generated from these points. These feature classes" \
+                         " (or feature services generated from them) can then be used as the backup layer inputs to " \
+                         "the 'Update Backups of Track Points and Track Lines' tool."
       self.category = "Location Tracking Backup Tools"
 
    def getParameterInfo(self):
@@ -307,9 +310,9 @@ class loc2bkp(object):
       self.label = "Update Existing Backups of Track Points and Lines"
       self.description = "Compares a track points feature service layer to an existing track points feature class or " \
                          "feature service layer backup. Using a date created field to find rows not present in the " \
-                         "backup copies the new rows from the source to the backup. It then builds track lines for " \
-                         "new the updated points, and appends the lines to the backup track lines layer " \
-                         "(feature class or feature service layer)."
+                         "backup, copies the new rows from the source to the backup. It then builds track lines for " \
+                         "the new points, and appends the lines to the backup track lines layer " \
+                         "(which can be a feature class or feature service layer)."
       self.category = "Location Tracking Backup Tools"
 
    def getParameterInfo(self):
@@ -399,7 +402,7 @@ class loc2bkp(object):
             arcpy.Append_management('tmp_lines_proj', lines, "NO_TEST")
          else:
             arcpy.Append_management('tmp_lines', lines, "NO_TEST")
-         ct = arcpy.GetCount_management(lines)[0]
+         ct = arcpy.GetCount_management('tmp_lines')[0]
          arcpy.AddMessage("Appended " + ct + " new track lines.")
       else:
          arcpy.AddMessage("No new data, no updates made.")

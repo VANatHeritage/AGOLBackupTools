@@ -31,24 +31,26 @@ import base64
 
 def loginAGOL(user=None, credentials=None, portal=None):
    """
-   Check if logged in, and if not, log in to an ArcGIS online portal (e.g. ArcGIS Online). Will prompt for password.
+   Check if logged in, and if not, use username or credentials file to log in to an ArcGIS online portal
+   (e.g. ArcGIS Online). If not using a credentials file, will prompt for password.
    :param user: User name for portal. Will be used (including prompt for password) if credentials are not supplied.
    :param credentials: Credentials file (username and encoded password)
    :param portal: (optional) Portal webpage. Generally should not be used, as arcpy.GetActivePortalURL() will pull
    the default portal (i.e. ArcGIS online).
-   :return:
+   :return: connection information
+
+   Note: username is case-sensitive (even though logging in to AGOL a web browser is not!)
    """
    if not portal:
       portal = arcpy.GetActivePortalURL()
    ct = 0
+   if credentials:
+      with open(credentials) as f:
+         cred = [line.splitlines()[0] for line in f]
+      print('Using credentials file to connect to `' + portal + '` with username `' + cred[0] + '`...')
+      arcpy.SignInToPortal(portal, cred[0], password=base64.b64decode(cred[1]).decode("utf-8"))
    while arcpy.GetPortalInfo()['organization'] == '' and ct < 5:
-      if credentials:
-         with open(credentials) as f:
-            cred = [line.splitlines()[0] for line in f]
-         print('Using credentials file to connect to `' + portal + '` with username `' + cred[0] + '`...')
-         arcpy.SignInToPortal(portal, cred[0], password=base64.b64decode(cred[1]).decode("utf-8"))
-         ct = 5
-      elif user:
+      if user:
          print('Signing in with username `' + user + '`...')
          try:
             arcpy.SignInToPortal(portal, user, getpass.getpass("Password: ", False))
@@ -57,6 +59,7 @@ def loginAGOL(user=None, credentials=None, portal=None):
             print('Incorrect password, ' + str(5 - ct) + ' tries left.')
       else:
          print("Need to provide username or credentials file.")
+         ct = 5
    if arcpy.GetPortalInfo()['organization'] == '':
       raise ValueError("Log-in failed.")
    else:
@@ -66,7 +69,7 @@ def loginAGOL(user=None, credentials=None, portal=None):
 
 def fieldMappings(lyr, oid_agol=True):
    """
-   Builds a default field mapping, with an additional OBJECTID_AGOL field, which maps from the OBJECTID
+   Builds a default field mapping, with an optional OBJECTID_AGOL field, which maps from the OBJECTID
    of the AGOL layer. Added this because it seemed to fix an error where the resulting FC has no fields.
    :param lyr: Layer to get field mappings for
    :param oid_agol: Whether to add a OBJECTID_AGOL field (mapping from the AGOL layer's OBJECTID).
@@ -277,7 +280,7 @@ def ServToBkp(from_data, to_data, created_date_field="created_date", append_data
                                                   os.path.basename(append_data), query, fms)
    ct = arcpy.GetCount_management(append_data).getOutput(0)
    if ct != '0':
-      arcpy.AddMessage(ct + " records pulled, checking for duplicates...")
+      arcpy.AddMessage(ct + " records pulled, checking for duplicates in backup data...")
       # This compares OBJECTID_AGOL from in backup to append_data, and deletes rows in append_data already in to_data.
       # NOTE: simple '=' in query below does not work, that is why '>=' is used.
       query = created_date_field + " >= timestamp '" + last_date.strftime("%Y-%m-%d %H:%M:%S") + "'"
@@ -410,7 +413,8 @@ def prep_track_pts(in_pts, by_session=True, break_tracks_seconds=600):
    '''
    arcpy.CalculateField_management(in_pts, 'use', 'pt_use(!horizontal_accuracy!, !speed!, !course!)', code_block=fn,
                                    field_type="SHORT")
-   # Get data frame of points. Since this is to define continuous tracking, it seems better to use all points, even if use = 0.
+   # Assign a track_id to continuously-collected points having the same session_id or full_name.
+   # Get data frame of points. Since this process is for defining continuous tracking, all points are used (even use=0).
    if by_session:
       break_by = 'session_id'
    else:
@@ -439,15 +443,19 @@ def make_track_lines(in_pts, out_track_lines):
    :param in_pts: Input track points, processed with prep_track_pts
    :param out_track_lines: Output track lines
    :return: out_track_lines
-   See: https://doc.arcgis.com/en/tracker/help/use-tracks.htm, which describes the default Track_Lines created on
-   ArcGIS online. This process builds a lines similar to the Track_Lines dataset, but generates lines only for use=1
-   points (identified in prep_track_pts), and a select set of attributes (see line_flds).
+   This process builds track lines from location tracking points for use=1 points (identified in prep_track_pts),
+   with a select set of summary attributes (see line_flds).
+
+   Also see: https://doc.arcgis.com/en/tracker/help/use-tracks.htm, which describes the auto-generated Track_Lines
+   created by ArcGIS online. The result from this function is similar, but can be different for a couple of reasons:
+      - 'low accuracy' points excluded by one process may have been included by the other
+      - auto-generated AGOL track lines are limited to one hour in duration
    """
    arcpy.AddMessage("Making track lines from use = 1 points...")
    # Make track lines from use = 1 points.
    lyr = arcpy.MakeFeatureLayer_management(in_pts, where_clause='use = 1')
    arcpy.PointsToLine_management(lyr, out_track_lines, 'track_id', 'location_timestamp')
-   # Summarize tracks
+   # Summarize tracks (decided to exclude some fields unlikely to be used)
    line_flds = [['full_name', 'FIRST', 'full_name'], ['location_timestamp', 'MIN', 'start_time'], ['location_timestamp', 'MAX', 'end_time'],
                 ['altitude', 'MIN', 'min_altitude'], ['altitude', 'MAX', 'max_altitude'], ['altitude', 'MEAN', 'avg_altitude'],
                 # ['horizontal_accuracy', 'MIN', 'min_horizontal_accuracy'], ['horizontal_accuracy', 'MAX', 'max_horizontal_accuracy'],
@@ -463,11 +471,11 @@ def make_track_lines(in_pts, out_track_lines):
    # Rename fields
    for f in line_flds:
       arcpy.AlterField_management('tmp_track_stats', f[1] + '_' + f[0], f[2], clear_field_alias=True)
-   arcpy.AlterField_management('tmp_track_stats', 'FREQUENCY', 'count_')  # note: 'count' is reserved on AGOL, that is why 'count_' is used.
+   arcpy.AlterField_management('tmp_track_stats', 'FREQUENCY', 'count_')  # note: 'count' is a reserved field name on AGOL, that is why 'count_' is used.
    # Calculate duration and total distance
    dur = 'round((!end_time!.timestamp() - !start_time!.timestamp()) / 60, 2)'
    arcpy.CalculateField_management('tmp_track_stats', 'duration_minutes', dur, field_type="FLOAT")
-   flds = [a.name for a in arcpy.ListFields('tmp_track_stats') if not a.name in ['OBJECTID', 'track_id']]
+   flds = [a.name for a in arcpy.ListFields('tmp_track_stats') if a.name not in ['OBJECTID', 'track_id']]
    if arcpy.GetCount_management(out_track_lines)[0] == '0':
       arcpy.AddMessage("No track lines generated, exiting.")
       return out_track_lines
@@ -482,24 +490,27 @@ def main():
    by executing a '.bat' file with the following command:
    "C:\Program Files\ArcGIS\Pro\bin\Python\Scripts\propy.bat" "C:\path_to\AGOLBackupTools\AGOLBackupTools_helper.py"
    """
-   # portal = loginAGOL('username')
-   # backup_folder = r"C:\path_to\backup_folder"
-   # url_file = r'C:\path_to\urls.txt'
-   # ArchiveServices(url_file, backup_folder, old_daily=10, old_monthly=12)
+   loginAGOL()
+   backup_folder = r"C:\path_to\backup_folder"
+   url_file = r'C:\path_to\urls.txt'
+   ArchiveServices(url_file, backup_folder, old_daily=10, old_monthly=12)
 
-   # arcpy.ImportToolbox(r'D:\projects\agol_backup\AGOLBackupTools\AGOLBackupTools.pyt')
-   # arcpy.ArcGISOnlineBackupTools.fs2fc(
-   #    "https://locationservices1.arcgis.com/PxUNqSbaWFvFgHnJ/arcgis/rest/services/location_tracking/FeatureServer",
-   #    "Tracks", r"D:\projects\agol_backup\scratch.gdb", "test")
+   arcpy.ImportToolbox(r'D:\projects\agol_backup\AGOLBackupTools\AGOLBackupTools.pyt')
+   arcpy.ArcGISOnlineBackupTools.fs2fc(
+      "https://locationservices1.arcgis.com/PxUNqSbaWFvFgHnJ/arcgis/rest/services/location_tracking/FeatureServer",
+      "Tracks", r"D:\projects\agol_backup\scratch.gdb", "test")
 
    """
-   Example 'service to backup service' procedure. This is needed for location service feature services, which 
-   automatically delete data older than 30 days.
+   Example 'service to backup service' procedure. This is used for feature services where new data is frequently added, 
+   but the data is not edited afterwards (e.g. location tracking data).
    """
-   # from_data = 'https://locationservices1.arcgis.com/PxUNqSbaWFvFgHnJ/arcgis/rest/services/a2c3527390c849d78e8d038345e4f7af_Track_View/FeatureServer/2'
-   # to_data = 'https://services1.arcgis.com/PxUNqSbaWFvFgHnJ/arcgis/rest/services/DNH_Stewardship_Tracks_2022/FeatureServer/0'
-   # ServToBkp(from_data, to_data, created_date_field="created_date")
+   from_data = 'https://locationservices1.arcgis.com/PxUNqSbaWFvFgHnJ/arcgis/rest/services/a2c3527390c849d78e8d038345e4f7af_Track_View/FeatureServer/2'
+   to_data = 'https://services1.arcgis.com/PxUNqSbaWFvFgHnJ/arcgis/rest/services/DNH_Stewardship_Tracks_2022/FeatureServer/0'
+   ServToBkp(from_data, to_data, created_date_field="created_date")
 
+   """
+   See the python toolbox for specific location tracking tools.
+   """
    return
 
 
