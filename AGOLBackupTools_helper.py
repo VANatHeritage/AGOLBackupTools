@@ -34,7 +34,7 @@ def loginAGOL(user=None, credentials=None, portal=None):
    Check if logged in, and if not, use username or credentials file to log in to an ArcGIS online portal
    (e.g. ArcGIS Online). If not using a credentials file, will prompt for password.
    :param user: User name for portal. Will be used (including prompt for password) if credentials are not supplied.
-   :param credentials: Credentials file (username and encoded password)
+   :param credentials: Credentials file (Text file with two lines: (1) username and (2) encoded password)
    :param portal: (optional) Portal webpage. Generally should not be used, as arcpy.GetActivePortalURL() will pull
    the default portal (i.e. ArcGIS online).
    :return: connection information
@@ -69,23 +69,23 @@ def loginAGOL(user=None, credentials=None, portal=None):
 
 def fieldMappings(lyr, oid_agol=True):
    """
-   Builds a default field mapping, with an optional OBJECTID_AGOL field, which maps from the OBJECTID
+   Builds a default field mapping, with an optional OBJECTID_AGOL field, which maps from the OID field
    of the AGOL layer. Added this because it seemed to fix an error where the resulting FC has no fields.
    :param lyr: Layer to get field mappings for
-   :param oid_agol: Whether to add a OBJECTID_AGOL field (mapping from the AGOL layer's OBJECTID).
+   :param oid_agol: Whether to add a OBJECTID_AGOL field (mapping from the AGOL layer's OID field).
    :return: field mappings
    """
    fms = arcpy.FieldMappings()
+   oid_name = [f.name for f in arcpy.ListFields(lyr) if f.type == 'OID'][0]
    for f in arcpy.ListFields(lyr):
-      if f.name.upper() not in ['OBJECTID', 'SHAPE']:
+      if f.name.upper() not in [oid_name.upper(), 'SHAPE']:
          fm = arcpy.FieldMap()
          fm.addInputField(lyr, f.name)
          fms.addFieldMap(fm)
-   # add OBJECTID field
+   # map OID field to output OBJECTID_AGOL field
    if oid_agol:
       fm = arcpy.FieldMap()
-      oid = [f.name for f in arcpy.ListFields(lyr) if f.name.upper() == 'OBJECTID']
-      fm.addInputField(lyr, oid[0])
+      fm.addInputField(lyr, oid_name)
       f_name = fm.outputField
       f_name.name = 'OBJECTID_AGOL'
       f_name.aliasName = 'OBJECTID_AGOL'
@@ -105,6 +105,7 @@ def GetFeatServAll(url, gdb, fc, oid_agol=True):
    """
    fcout = gdb + os.sep + fc
    d = arcpy.Describe(url)
+   oid_name = [f.name for f in arcpy.ListFields(url) if f.type == 'OID'][0]
    if d.datatype == 'Table':
       lyr = arcpy.MakeTableView_management(url)
       ctall = int(arcpy.GetCount_management(lyr)[0])
@@ -123,7 +124,7 @@ def GetFeatServAll(url, gdb, fc, oid_agol=True):
       oidmax = max([o for o in arcpy.da.SearchCursor(fcout, "OBJECTID_AGOL")])[0]
       ctupd0 = int(arcpy.GetCount_management(fcout)[0])
       try:
-         arcpy.Append_management(url, fcout, expression="OBJECTID > " + str(oidmax), schema_type="NO_TEST", field_mapping=fms.exportToString())
+         arcpy.Append_management(url, fcout, expression=oid_name + " > " + str(oidmax), schema_type="NO_TEST", field_mapping=fms.exportToString())
       except:
          e += 1
          if e > 5:
@@ -297,9 +298,10 @@ def ServToBkp(from_data, to_data, created_date_field="created_date", append_data
    else:
       for r in repl:
          arcpy.AlterField_management(append_data, r[0], r[1], clear_field_alias=False)
+      if "session_id" in d2_fld:
+         add_user_date(append_data)
       arcpy.AddMessage("Appending " + ct + " new rows...")
       arcpy.Append_management(append_data, to_data, 'NO_TEST')
-   arcpy.AddMessage("Finished.")
    return to_data
 
 
@@ -380,13 +382,14 @@ def arcgis_table_to_df(in_fc, input_fields=None, query=""):
    return fc_dataframe
 
 
-def prep_track_pts(in_pts, by_session=True, break_tracks_seconds=600):
+def prep_track_pts(in_pts, break_by='user_date', break_tracks_seconds=600):
    """
    Function to prepare tracking points for making track lines. Includes assignment of a 'use' column indicating points
    to use in track lines (i.e. points with acceptable accuracy), as well as a unique track line ID, either by session
    or user.
    :param in_pts: Input track points
-   :param by_session: If True, will use 'session_id' to assign unique track line ID. If False, 'full_name' (i.e. user name) is used.
+   :param break_by: Field used group points by, for creating track lines. Best options: "session_id", "full_name",
+      or "user_date" (a derived field combining user name + datestamp)
    :param break_tracks_seconds: duration in seconds, where a break in collection of points greater than this will result
    in a new track line ID (regardless of session or user). Default = 600 seconds = 10 minutes.
    :return: in_pts
@@ -415,10 +418,6 @@ def prep_track_pts(in_pts, by_session=True, break_tracks_seconds=600):
                                    field_type="SHORT")
    # Assign a track_id to continuously-collected points having the same session_id or full_name.
    # Get data frame of points. Since this process is for defining continuous tracking, all points are used (even use=0).
-   if by_session:
-      break_by = 'session_id'
-   else:
-      break_by = 'full_name'
    df = arcgis_table_to_df(in_pts, input_fields=[break_by, 'location_timestamp'])  # , query="use = 1")
    df['location_timestamp'] = pd.to_datetime(df["location_timestamp"])
    df = df.sort_values([break_by, 'location_timestamp'])
@@ -426,14 +425,20 @@ def prep_track_pts(in_pts, by_session=True, break_tracks_seconds=600):
    # diff is time in seconds between the current row and previous row
    df["diff"] = (df['location_timestamp'] - df['location_timestamp'].shift(periods=1)).dt.seconds
 
-   # update diff for new session or user (so always assigned to new track)
+   # update diff for new session or user (so it will always be assigned to a new track)
    df.loc[df[break_by] != (df[break_by].shift(periods=1)), "diff"] = break_tracks_seconds + 1
    # switch indicates start of new track_id
    df['switch'] = numpy.where(df['diff'] > break_tracks_seconds, 1, 0)
    df['track_id'] = df['switch'].cumsum()
-   csv = arcpy.env.scratchFolder + os.sep + 'tmp_tracks.csv'
-   df.to_csv(csv)
-   JoinFast(in_pts, 'OBJECTID', csv, 'OBJECTID', ['track_id'])
+
+   # update track ids
+   tdict = df['track_id'].to_dict()
+   arcpy.AddField_management(in_pts, 'track_id', 'LONG')
+   with arcpy.da.UpdateCursor(in_pts, ['OBJECTID', 'track_id']) as curs:
+      for r in curs:
+         r[1] = tdict[r[0]]
+         curs.updateRow(r)
+
    arcpy.AddMessage('Point attributes calculated.')
    return in_pts
 
@@ -465,8 +470,8 @@ def make_track_lines(in_pts, out_track_lines):
                 # ['speed', 'MIN', 'min_speed'], ['speed', 'MAX', 'max_speed'],
                 ['speed', 'MEAN', 'avg_speed'],
                 # ['battery_percentage', 'MIN', 'min_battery_percentage'], ['battery_percentage', 'MAX', 'max_battery_percentage']
-                ['session_id', 'FIRST', 'session_id'], ['created_date', 'MAX', 'created_date']
-                ]
+                ['session_id', 'FIRST', 'session_id'], ['created_date', 'MAX', 'created_date'],
+                ['user_date', 'FIRST', 'user_date']]
    arcpy.Statistics_analysis(lyr, 'tmp_track_stats', [a[0:2] for a in line_flds], case_field="track_id")
    # Rename fields
    for f in line_flds:
@@ -484,33 +489,67 @@ def make_track_lines(in_pts, out_track_lines):
    return out_track_lines
 
 
-def main():
+def add_user_date(loc_pts):
    """
-   Example archive procedure. This script could be scheduled to run on a daily basis (e.g with Windows Task Scheduler),
-   by executing a '.bat' file with the following command:
+   Adds a user_date column to a track points backup. This column can be used in track line generation. Also fills in
+   missing session_id with the calculated user_date.
+   :param loc_pts: Copy of track points from a location tracking feature service
+   :return:
+   """
+   # Calculate the user-date combo field, which can be used for track line generation.
+   arcpy.CalculateField_management(loc_pts, "user_date",
+                                   "!full_name! + '-' + !location_timestamp!.strftime('%Y%m%d')")
+   # Fill in any missing session_ids
+   lyr = arcpy.MakeFeatureLayer_management(loc_pts, where_clause="session_id IS NULL")
+   if arcpy.GetCount_management(lyr)[0] != '0':
+      print("Filling in missing session_id...")
+      arcpy.CalculateField_management(lyr, "session_id", "!user_date!")
+      del lyr
+   return loc_pts
+
+
+def main():
+
+   """
+   This section contains examples of processes that could be scheduled to run daily/weekly (e.g. with Windows Task
+   Scheduler), by executing a '.bat' file with the following command:
    "C:\Program Files\ArcGIS\Pro\bin\Python\Scripts\propy.bat" "C:\path_to\AGOLBackupTools\AGOLBackupTools_helper.py"
    """
    loginAGOL()
+   arcpy.ImportToolbox(r'\path_to\AGOLBackupTools.pyt')
+
+   """
+   Example feature services archive procedure.
+   """
    backup_folder = r"C:\path_to\backup_folder"
    url_file = r'C:\path_to\urls.txt'
    ArchiveServices(url_file, backup_folder, old_daily=10, old_monthly=12)
 
-   arcpy.ImportToolbox(r'D:\projects\agol_backup\AGOLBackupTools\AGOLBackupTools.pyt')
-   arcpy.ArcGISOnlineBackupTools.fs2fc(
-      "https://locationservices1.arcgis.com/PxUNqSbaWFvFgHnJ/arcgis/rest/services/location_tracking/FeatureServer",
-      "Tracks", r"D:\projects\agol_backup\scratch.gdb", "test")
-
    """
-   Example 'service to backup service' procedure. This is used for feature services where new data is frequently added, 
-   but the data is not edited afterwards (e.g. location tracking data).
+   Example 'Update Backup of a Feature Service Layer' procedure. This is used for feature services where new data is 
+   frequently added, and the data is not manually edited after it is added (e.g. location tracking data).
    """
    from_data = 'https://locationservices1.arcgis.com/PxUNqSbaWFvFgHnJ/arcgis/rest/services/a2c3527390c849d78e8d038345e4f7af_Track_View/FeatureServer/2'
-   to_data = 'https://services1.arcgis.com/PxUNqSbaWFvFgHnJ/arcgis/rest/services/DNH_Stewardship_Tracks_2022/FeatureServer/0'
+   to_data = r'C:\path_to\backup'
    ServToBkp(from_data, to_data, created_date_field="created_date")
 
    """
-   See the python toolbox for specific location tracking tools.
+   Example '[Create/Update] Existing Backups of Track Points and Lines'. This will [create/append new] tracking points 
+   to a local feature class backup, with an attribute ('use') indicating whether the point has sufficient accuracy for 
+   inclusion in track lines. Track lines are then generated for new use=1 points, and appended to the backup track 
+   lines layer.
    """
+   web_pts = 'https://locationservices1.arcgis.com/PxUNqSbaWFvFgHnJ/arcgis/rest/services/87fdd6620d8f4e6bbf48e3b09279ed53_Track_View/FeatureServer/0'
+   bkp_pts = r'C:\path_to\backup',
+   bkp_lines = 'https://services1.arcgis.com/PxUNqSbaWFvFgHnJ/arcgis/rest/services/DNH_Inventory_Tracks_2022/FeatureServer/47'
+   if not arcpy.Exists(bkp_pts):
+      # Create new backups for points and lines
+      bkp_lines = bkp_pts + '_lines'
+      arcpy.ArcGISOnlineBackupTools.loc2newbkp(web_pts, bkp_pts, bkp_lines)
+   else:
+      # Update existing points and lines backups
+      arcpy.ArcGISOnlineBackupTools.loc2bkp(web_pts, bkp_pts, bkp_lines)
+
    return
 
 
