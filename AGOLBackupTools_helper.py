@@ -40,6 +40,7 @@ def loginAGOL(user=None, credentials=None, portal=None):
    :return: connection information
 
    Note: username is case-sensitive (even though logging in to AGOL a web browser is not!)
+   # coulddo: use OS-level authentication method from arcgis API for python?
    """
    if not portal:
       portal = arcpy.GetActivePortalURL()
@@ -194,7 +195,11 @@ def ArchiveServices(url_file, backup_folder, old_daily=10, old_monthly=12):
          arcpy.env.workspace = gdb
 
          # find layer(s) in the feature service
-         chld = arcpy.da.Describe(f)['children']
+         try:
+            chld = arcpy.da.Describe(f)['children']
+         except:
+            print("Error trying to access: `" + f + "`.")
+            continue
          for ch in chld:
             fu = f + os.sep + ch['file']  # this creates the URL (base url + index number).
             lnm = 'L' + ch['file']
