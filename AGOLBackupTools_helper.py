@@ -501,9 +501,17 @@ def add_user_date(loc_pts):
    :param loc_pts: Copy of track points from a location tracking feature service
    :return:
    """
+   utcfn = """def utc2local(utc):
+       epoch = time.mktime(utc.timetuple())
+       offset = datetime.datetime.fromtimestamp(epoch) - datetime.datetime.utcfromtimestamp(epoch)
+       return utc + offset"""
    # Calculate the user-date combo field, which can be used for track line generation.
+   # headsup: location_timestamp from AGOL is in the UTC time zone. utclocal() converts to local time so that
+   #  the date is extracted in the local time zone. Note that this is the only tz-adjustment made in this module. 
+   #  Otherwise, datetime fields are used as-is (UTC).
    arcpy.CalculateField_management(loc_pts, "user_date",
-                                   "!full_name! + '-' + !location_timestamp!.strftime('%Y%m%d')")
+                                   "!full_name! + '-' + utc2local(!location_timestamp!).strftime('%Y%m%d')", 
+                                   code_block=utcfn)
    # Fill in any missing session_ids
    lyr = arcpy.MakeFeatureLayer_management(loc_pts, where_clause="session_id IS NULL")
    if arcpy.GetCount_management(lyr)[0] != '0':
@@ -521,13 +529,13 @@ def main():
    "C:\Program Files\ArcGIS\Pro\bin\Python\Scripts\propy.bat" "C:\path_to\AGOLBackupTools\AGOLBackupTools_helper.py"
    """
    loginAGOL()
-   arcpy.ImportToolbox(r'\path_to\AGOLBackupTools.pyt')
+   arcpy.ImportToolbox(r'path_to\AGOLBackupTools.pyt')
 
    """
    Example feature services archive procedure.
    """
    backup_folder = r"C:\path_to\backup_folder"
-   url_file = r'C:\path_to\urls.txt'
+   url_file = r'C:\path_to\urls.txt'  # simple text file with one URL per line. Lines starting with "#" are ignored.
    ArchiveServices(url_file, backup_folder, old_daily=10, old_monthly=12)
 
    """
@@ -545,15 +553,15 @@ def main():
    lines layer.
    """
    web_pts = 'https://locationservices1.arcgis.com/PxUNqSbaWFvFgHnJ/arcgis/rest/services/87fdd6620d8f4e6bbf48e3b09279ed53_Track_View/FeatureServer/0'
-   bkp_pts = r'C:\path_to\backup',
-   bkp_lines = 'https://services1.arcgis.com/PxUNqSbaWFvFgHnJ/arcgis/rest/services/DNH_Inventory_Tracks_2022/FeatureServer/47'
+   bkp_pts = r'C:\path_to\backup.gdb\bkp_pts',
    if not arcpy.Exists(bkp_pts):
-      # Create new backups for points and lines
+      # Create new feature class backups for points and lines. The lines can then be shared to AGOL as a new feature service.
       bkp_lines = bkp_pts + '_lines'
       arcpy.ArcGISOnlineBackupTools.loc2newbkp(web_pts, bkp_pts, bkp_lines)
-   else:
-      # Update existing points and lines backups
-      arcpy.ArcGISOnlineBackupTools.loc2bkp(web_pts, bkp_pts, bkp_lines)
+      # bkp_lines should then be shared to AGOL as a new feature service
+   # Update existing points and lines feature service backups
+   bkp_lines_service = 'https://services1.arcgis.com/PxUNqSbaWFvFgHnJ/arcgis/rest/services/DNH_Inventory_Tracks/FeatureServer/10'
+   arcpy.ArcGISOnlineBackupTools.loc2bkp(web_pts, bkp_pts, bkp_lines_service)
 
    return
 
