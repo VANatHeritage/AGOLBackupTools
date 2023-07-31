@@ -289,7 +289,7 @@ class loc2newbkp(object):
          parameterType="Required",
          direction="Input")
       break_by.filter.type = "ValueList"
-      break_by.filter.list = ["user_date", "session_id", "full_name"]
+      break_by.filter.list = ["user_date", "session_id"]  # , "full_name"]
       break_by.value = "user_date"
 
       break_tracks_seconds = arcpy.Parameter(
@@ -379,7 +379,7 @@ class loc2bkp(object):
          parameterType="Required",
          direction="Input")
       break_by.filter.type = "ValueList"
-      break_by.filter.list = ["user_date", "session_id", "full_name"]
+      break_by.filter.list = ["user_date", "session_id"]  # , "full_name"]
       break_by.value = "user_date"
 
       break_tracks_seconds = arcpy.Parameter(

@@ -231,7 +231,7 @@ def ArchiveServices(url_file, backup_folder, old_daily=10, old_monthly=12):
             arcpy.AddMessage('Failed to delete old daily archives in GDB: ' + nm_gdb)
    else:
       arcpy.AddMessage('No ArcGIS Online connection, are you logged in?')
-   print('Done')
+   print('Done archiving services.')
    return True
 
 
@@ -542,7 +542,7 @@ def main():
    Example 'Update Backup of a Feature Service Layer' procedure. This is used for feature services where new data is 
    frequently added, and the data is not manually edited after it is added (e.g. location tracking data).
    """
-   from_data = 'https://locationservices1.arcgis.com/PxUNqSbaWFvFgHnJ/arcgis/rest/services/a2c3527390c849d78e8d038345e4f7af_Track_View/FeatureServer/2'
+   from_data = 'https://locationservices1.arcgis.com/points/FeatureServer/0'
    to_data = r'C:\path_to\backup'
    ServToBkp(from_data, to_data, created_date_field="created_date")
 
@@ -552,7 +552,7 @@ def main():
    inclusion in track lines. Track lines are then generated for new use=1 points, and appended to the backup track 
    lines layer.
    """
-   web_pts = 'https://locationservices1.arcgis.com/PxUNqSbaWFvFgHnJ/arcgis/rest/services/87fdd6620d8f4e6bbf48e3b09279ed53_Track_View/FeatureServer/0'
+   web_pts = 'https://locationservices1.arcgis.com/points/FeatureServer/0'
    bkp_pts = r'C:\path_to\backup.gdb\bkp_pts',
    if not arcpy.Exists(bkp_pts):
       # Create new feature class backups for points and lines. The lines can then be shared to AGOL as a new feature service.
@@ -560,7 +560,7 @@ def main():
       arcpy.ArcGISOnlineBackupTools.loc2newbkp(web_pts, bkp_pts, bkp_lines)
       # bkp_lines should then be shared to AGOL as a new feature service
    # Update existing points and lines feature service backups
-   bkp_lines_service = 'https://services1.arcgis.com/PxUNqSbaWFvFgHnJ/arcgis/rest/services/DNH_Inventory_Tracks/FeatureServer/10'
+   bkp_lines_service = 'https://services1.arcgis.com/Tracks/FeatureServer/0'
    arcpy.ArcGISOnlineBackupTools.loc2bkp(web_pts, bkp_pts, bkp_lines_service)
 
    return
