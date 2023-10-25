@@ -428,7 +428,8 @@ def prep_track_pts(in_pts, break_by='user_date', break_tracks_seconds=600):
    df = df.sort_values([break_by, 'location_timestamp'])
 
    # diff is time in seconds between the current row and previous row
-   df["diff"] = (df['location_timestamp'] - df['location_timestamp'].shift(periods=1)).dt.seconds
+   # df["diff"] = (df['location_timestamp'] - df['location_timestamp'].shift(periods=1)).dt.seconds
+   df["diff"] = round((df['location_timestamp'] - df['location_timestamp'].shift(periods=1)).dt.total_seconds(), 2)
 
    # update diff for new session or user (so it will always be assigned to a new track)
    df.loc[df[break_by] != (df[break_by].shift(periods=1)), "diff"] = break_tracks_seconds + 1
@@ -437,13 +438,17 @@ def prep_track_pts(in_pts, break_by='user_date', break_tracks_seconds=600):
    df['track_id'] = df['switch'].cumsum()
 
    # update track ids
-   tdict = df['track_id'].to_dict()
    arcpy.AddField_management(in_pts, 'track_id', 'LONG')
-   with arcpy.da.UpdateCursor(in_pts, ['OBJECTID', 'track_id']) as curs:
+   arcpy.AddField_management(in_pts, 'seconds', 'FLOAT')
+   with arcpy.da.UpdateCursor(in_pts, ['OBJECTID', 'track_id', 'seconds']) as curs:
       for r in curs:
-         r[1] = tdict[r[0]]
+         dat = df[df.index == r[0]].iloc[0]
+         r[1] = dat["track_id"]
+         if dat["switch"] == 0:
+            r[2] = dat["diff"]
+         else:
+            r[2] = 0
          curs.updateRow(r)
-
    arcpy.AddMessage('Point attributes calculated.')
    return in_pts
 

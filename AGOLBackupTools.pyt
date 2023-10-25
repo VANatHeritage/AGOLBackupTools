@@ -415,18 +415,21 @@ class loc2bkp(object):
       new_pts = 'tmp_' + os.path.basename(loc_pts)
       ServToBkp(web_pts, loc_pts, created_date_field="created_date", append_data=new_pts)
 
-      # If there is new data, update track lines.
+      # If there is new data, update track lines, using ALL points for the specific tracks.
       if arcpy.GetCount_management(new_pts)[0] != '0':
-         # Take ALL track points from track lines with any new points, copy them
+         # Find unique track names with any new points, make a copy of them
          uniq_trk = list(set([a[0] for a in arcpy.da.SearchCursor(new_pts, break_by)]))
-         lyr_pt = arcpy.MakeFeatureLayer_management(loc_pts)
-         arcpy.SelectLayerByAttribute_management(lyr_pt, 'NEW_SELECTION', break_by + " IN ('" + "','".join(uniq_trk) + "')")
-         arcpy.CopyFeatures_management(lyr_pt, 'tmp_pts')
+         uniq_trk_q = break_by + " IN ('" + "','".join(uniq_trk) + "')"
+         arcpy.Select_analysis(loc_pts, "tmp_pts", uniq_trk_q)
          print("Making new track lines for " + arcpy.GetCount_management('tmp_pts')[0] + " points.")
          prep_track_pts('tmp_pts', break_by=break_by, break_tracks_seconds=break_tracks_seconds)
          make_track_lines('tmp_pts', 'tmp_lines')
          # Now that lines are made, delete the original points from main layer, and then append the updated points.
-         arcpy.DeleteRows_management(lyr_pt)
+         lyr_pt = arcpy.MakeFeatureLayer_management(loc_pts, where_clause=uniq_trk_q)
+         with arcpy.da.UpdateCursor(lyr_pt, [break_by]) as curs:
+            for row in curs:
+               if row[0] in uniq_trk:
+                  curs.deleteRow()
          del lyr_pt
          arcpy.Append_management('tmp_pts', loc_pts, "NO_TEST")
          # exit now if no lines were generated (e.g. if there was only one point per track line)
@@ -435,11 +438,17 @@ class loc2bkp(object):
             return
          # Remove existing lines, by unique track ID
          arcpy.AddMessage("Updating track lines layer...")
-         lyr = arcpy.MakeFeatureLayer_management(lines)
-         arcpy.SelectLayerByAttribute_management(lyr, "NEW_SELECTION", break_by + " IN ('" + "','".join(uniq_trk) + "')")
-         if not arcpy.GetCount_management(lyr)[0] == '0':
-            arcpy.DeleteRows_management(lyr)
-         del lyr
+         lyr_line = arcpy.MakeFeatureLayer_management(lines,  where_clause=uniq_trk_q)
+         with arcpy.da.UpdateCursor(lyr_line, [break_by]) as curs:
+            for row in curs:
+               if row[0] in uniq_trk:
+                  curs.deleteRow()
+         # headsup: DeleteRows_management (below) stopped working on feature service all of a sudden! Changed to the updateCursor->deleteRow approach above, which is working.
+         #  error: arcgisscripting.ExecuteError: ERROR 160236: The operation is not supported by this implementation.
+         # arcpy.SelectLayerByAttribute_management(lyr_line, "NEW_SELECTION", uniq_trk_q)
+         # if not arcpy.GetCount_management(lyr_line)[0] == '0':
+         #    arcpy.DeleteRows_management(lyr_line)
+         del lyr_line
          # Check if spatial references are the same. If not, project new data to match the destination layer.
          sr0 = arcpy.Describe('tmp_lines').spatialReference.name
          sr1 = arcpy.Describe(lines).spatialReference.name
