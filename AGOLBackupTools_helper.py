@@ -439,8 +439,8 @@ def prep_track_pts(in_pts, break_by='user_date', break_tracks_seconds=600):
 
    # update track ids
    arcpy.AddField_management(in_pts, 'track_id', 'LONG')
-   arcpy.AddField_management(in_pts, 'seconds', 'FLOAT')
-   with arcpy.da.UpdateCursor(in_pts, ['OBJECTID', 'track_id', 'seconds']) as curs:
+   arcpy.AddField_management(in_pts, 'seconds_elapsed', 'FLOAT')
+   with arcpy.da.UpdateCursor(in_pts, ['OBJECTID', 'track_id', 'seconds_elapsed']) as curs:
       for r in curs:
          dat = df[df.index == r[0]].iloc[0]
          r[1] = dat["track_id"]
@@ -527,11 +527,12 @@ def add_user_date(loc_pts):
 
 
 def main():
-
    """
    This section contains examples of processes that could be scheduled to run daily/weekly (e.g. with Windows Task
    Scheduler), by executing a '.bat' file with the following command:
    "C:\Program Files\ArcGIS\Pro\bin\Python\Scripts\propy.bat" "C:\path_to\AGOLBackupTools\AGOLBackupTools_helper.py"
+   
+   The paths and URLs are all dummy values, and do not link to real data.
    """
    loginAGOL()
    arcpy.ImportToolbox(r'path_to\AGOLBackupTools.pyt')
@@ -565,7 +566,7 @@ def main():
       arcpy.ArcGISOnlineBackupTools.loc2newbkp(web_pts, bkp_pts, bkp_lines)
       # bkp_lines should then be shared to AGOL as a new feature service
    # Update existing points and lines feature service backups
-   bkp_lines_service = 'https://services1.arcgis.com/Tracks/FeatureServer/0'
+   bkp_lines_service = 'https://services1.arcgis.com/Tracks_Lines/FeatureServer/0'
    arcpy.ArcGISOnlineBackupTools.loc2bkp(web_pts, bkp_pts, bkp_lines_service)
 
    return
