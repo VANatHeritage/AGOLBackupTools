@@ -3,8 +3,8 @@ AGOLBackupTools python toolbox
 Author: David Bucklin
 Created on: 2021-01-26
 Version: ArcGIS Pro / Python 3.x
-Toolbox version: v0.2.1
-Version date: 2023-10-25
+Toolbox version: v0.2.2
+Version date: 2023-11-14
 
 This python toolbox contains tools for copying and archiving feature services from ArcGIS online.
 
@@ -299,7 +299,6 @@ class loc2newbkp(object):
          parameterType="Required",
          direction="Input")
       break_tracks_seconds.value = 600
-      # coulddo: add argument for break_tracks_seconds value?
       parameters = [web_pts, loc_pts_new, lines_new, break_by, break_tracks_seconds]
       return parameters
 
@@ -322,7 +321,6 @@ class loc2newbkp(object):
       return
 
    def execute(self, parameters, messages):
-      arcpy.env.workspace = arcpy.env.scratchGDB
       web_pts = parameters[0].valueAsText
       loc_pts = parameters[1].valueAsText
       lines = parameters[2].valueAsText
@@ -405,14 +403,16 @@ class loc2bkp(object):
       return
 
    def execute(self, parameters, messages):
-      arcpy.env.workspace = arcpy.env.scratchGDB
       web_pts = parameters[0].valueAsText
       loc_pts = parameters[1].valueAsText
       lines = parameters[2].valueAsText
       break_by = parameters[3].valueAsText
       break_tracks_seconds = int(parameters[4].valueAsText)
       arcpy.AddMessage('Looking for new points in ' + web_pts + '.')
-      new_pts = 'tmp_' + os.path.basename(loc_pts)
+      # Temp datasets
+      new_pts = arcpy.env.scratchGDB + os.sep + 'tmp_' + os.path.basename(loc_pts)
+      tmp_pts = arcpy.env.scratchGDB + os.sep + 'tmp_pts'
+      tmp_lines = arcpy.env.scratchGDB + os.sep + 'tmp_lines'
       ServToBkp(web_pts, loc_pts, created_date_field="created_date", append_data=new_pts)
 
       # If there is new data, update track lines, using ALL points for the specific tracks.
@@ -420,10 +420,10 @@ class loc2bkp(object):
          # Find unique track names with any new points, make a copy of them
          uniq_trk = list(set([a[0] for a in arcpy.da.SearchCursor(new_pts, break_by)]))
          uniq_trk_q = break_by + " IN ('" + "','".join(uniq_trk) + "')"
-         arcpy.Select_analysis(loc_pts, "tmp_pts", uniq_trk_q)
-         print("Making new track lines for " + arcpy.GetCount_management('tmp_pts')[0] + " points.")
-         prep_track_pts('tmp_pts', break_by=break_by, break_tracks_seconds=break_tracks_seconds)
-         make_track_lines('tmp_pts', 'tmp_lines')
+         arcpy.Select_analysis(loc_pts, tmp_pts, uniq_trk_q)
+         print("Making new track lines for " + arcpy.GetCount_management(tmp_pts)[0] + " points.")
+         prep_track_pts(tmp_pts, break_by=break_by, break_tracks_seconds=break_tracks_seconds)
+         make_track_lines(tmp_pts, tmp_lines)
          # Now that lines are made, delete the original points from main layer, and then append the updated points.
          lyr_pt = arcpy.MakeFeatureLayer_management(loc_pts, where_clause=uniq_trk_q)
          with arcpy.da.UpdateCursor(lyr_pt, [break_by]) as curs:
@@ -431,9 +431,9 @@ class loc2bkp(object):
                if row[0] in uniq_trk:
                   curs.deleteRow()
          del lyr_pt
-         arcpy.Append_management('tmp_pts', loc_pts, "NO_TEST")
+         arcpy.Append_management(tmp_pts, loc_pts, "NO_TEST")
          # exit now if no lines were generated (e.g. if there was only one point per track line)
-         if arcpy.GetCount_management('tmp_lines')[0] == '0':
+         if arcpy.GetCount_management(tmp_lines)[0] == '0':
             print("No track lines generated, no updates to be made.")
             return
          # Remove existing lines, by unique track ID
@@ -450,15 +450,16 @@ class loc2bkp(object):
          #    arcpy.DeleteRows_management(lyr_line)
          del lyr_line
          # Check if spatial references are the same. If not, project new data to match the destination layer.
-         sr0 = arcpy.Describe('tmp_lines').spatialReference.name
+         sr0 = arcpy.Describe(tmp_lines).spatialReference.name
          sr1 = arcpy.Describe(lines).spatialReference.name
          if sr0 != sr1:
             arcpy.AddMessage("Projecting lines...")
-            arcpy.Project_management('tmp_lines', 'tmp_lines_proj', lines)
-            arcpy.Append_management('tmp_lines_proj', lines, "NO_TEST")
+            tmp_lines_proj = arcpy.env.scratchGDB + os.sep + 'tmp_lines_proj'
+            arcpy.Project_management(tmp_lines, tmp_lines_proj, lines)
+            arcpy.Append_management(tmp_lines_proj, lines, "NO_TEST")
          else:
-            arcpy.Append_management('tmp_lines', lines, "NO_TEST")
-         ct = arcpy.GetCount_management('tmp_lines')[0]
+            arcpy.Append_management(tmp_lines, lines, "NO_TEST")
+         ct = arcpy.GetCount_management(tmp_lines)[0]
          arcpy.AddMessage("Appended " + ct + " new track lines.")
       else:
          arcpy.AddMessage("No new data, no updates made.")

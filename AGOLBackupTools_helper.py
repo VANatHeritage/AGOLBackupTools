@@ -28,13 +28,18 @@ import time
 import numpy
 import base64
 
+def credEncode(string):
+   string_bytes = string.encode("ascii")
+   base64_bytes = base64.b64encode(string_bytes)
+   base64_string = base64_bytes.decode("ascii")
+   return base64_string
 
 def loginAGOL(user=None, credentials=None, portal=None):
    """
    Check if logged in, and if not, use username or credentials file to log in to an ArcGIS online portal
    (e.g. ArcGIS Online). If not using a credentials file, will prompt for password.
    :param user: User name for portal. Will be used (including prompt for password) if credentials are not supplied.
-   :param credentials: Credentials file (Text file with two lines: (1) username and (2) encoded password)
+   :param credentials: Credentials file, Text file with two lines: (1) username and (2) encoded password (see credEncode)
    :param portal: (optional) Portal webpage. Generally should not be used, as arcpy.GetActivePortalURL() will pull
    the default portal (i.e. ArcGIS online).
    :return: connection information
@@ -112,13 +117,16 @@ def GetFeatServAll(url, gdb, fc, oid_agol=True):
       ctall = int(arcpy.GetCount_management(lyr)[0])
       arcpy.AddMessage('Getting ' + str(ctall) + ' rows...')
       fms = fieldMappings(lyr, oid_agol)
-      arcpy.TableToTable_conversion(url, gdb, fc, field_mapping=fms.exportToString())
+      arcpy.ExportTable_conversion(url, fcout, field_mapping=fms.exportToString())
+      # arcpy.TableToTable_conversion(url, gdb, fc, field_mapping=fms.exportToString())
    else:
       lyr = arcpy.MakeFeatureLayer_management(url)
       ctall = int(arcpy.GetCount_management(lyr)[0])
       arcpy.AddMessage('Getting ' + str(ctall) + ' features...')
       fms = fieldMappings(lyr, oid_agol)
-      arcpy.FeatureClassToFeatureClass_conversion(url, gdb, fc, field_mapping=fms.exportToString())
+      # arcpy.FeatureClassToFeatureClass_conversion(url, gdb, fc, field_mapping=fms.exportToString())
+      oid_name = [f.name for f in arcpy.ListFields(lyr) if f.type == 'OID'][0]
+      arcpy.ExportFeatures_conversion(url, fcout, field_mapping=fms.exportToString())
    ctupd = int(arcpy.GetCount_management(fcout)[0])
    e = 1
    while ctupd < ctall:
@@ -191,8 +199,6 @@ def ArchiveServices(url_file, backup_folder, old_daily=10, old_monthly=12):
             arcpy.CreateFileGDB_management(os.path.dirname(gdb), os.path.basename(gdb))  # create if doesn't exist
          else:
             arcpy.AddMessage('Using existing geodatabase `' + gdb + '`.')
-         # Need to set workspace, to list feature classes later on.
-         arcpy.env.workspace = gdb
 
          # find layer(s) in the feature service
          try:
@@ -209,23 +215,23 @@ def ArchiveServices(url_file, backup_folder, old_daily=10, old_monthly=12):
                archm = nm + '_' + dm
                archd = nm + '_' + dt
                GetFeatServAll(fu, gdb, archm)
-               if ch['dataType'] == 'Table':
-                  arcpy.TableToTable_conversion(archm, gdb, archd)
-               else:
-                  arcpy.FeatureClassToFeatureClass_conversion(archm, gdb, archd)
+               # Make daily copy
+               arcpy.Copy_management(gdb + os.sep + archm, gdb + os.sep + archd)
                arcpy.AddMessage('Successfully downloaded layer: ' + nm)
             except:
                arcpy.AddMessage('Failed downloading layer: ' + nm)
          # Delete old files
          try:
-            # delete old
-            ls = arcpy.ListFeatureClasses() + arcpy.ListTables()
+            # list all FC and Tables
+            with arcpy.EnvManager(workspace=gdb):
+               ls = arcpy.ListFeatureClasses() + arcpy.ListTables()
             mon = [l for l in ls if l[-7] == '_']
             day = [l for l in ls if l[-9] == '_' and l[-7] != '_']
             rmdt = [i for i in mon if i[-6:] < oldm] + [i for i in day if i[-8:] < oldd]
             if len(rmdt) > 0:
-               arcpy.AddMessage('Deleting ' + str(len(rmdt)) + ' old files...')
-               arcpy.Delete_management(rmdt)
+               todel = [gdb + os.sep + i for i in rmdt]
+               arcpy.AddMessage('Deleting ' + str(len(todel)) + ' old files...')
+               arcpy.Delete_management(todel)
                arcpy.AddMessage('Deleted old daily archives in GDB: ' + nm_gdb)
          except:
             arcpy.AddMessage('Failed to delete old daily archives in GDB: ' + nm_gdb)
@@ -282,8 +288,7 @@ def ServToBkp(from_data, to_data, created_date_field="created_date", append_data
    with arcpy.EnvManager(overwriteOutput=True):
       lyr = arcpy.MakeFeatureLayer_management(from_data)
       fms = fieldMappings(lyr)  # Adds the OBJECTID_AGOL field, mapping from original OBJECTID
-      arcpy.FeatureClassToFeatureClass_conversion(from_data, os.path.dirname(append_data),
-                                                  os.path.basename(append_data), query, fms)
+      arcpy.ExportFeatures_conversion(from_data, append_data, query, field_mapping=fms)  # , sort_field=[[created_date_field, "ASCENDING"]])
    ct = arcpy.GetCount_management(append_data).getOutput(0)
    if ct != '0':
       arcpy.AddMessage(ct + " records pulled, checking for duplicates in backup data...")
@@ -482,19 +487,20 @@ def make_track_lines(in_pts, out_track_lines):
                 # ['battery_percentage', 'MIN', 'min_battery_percentage'], ['battery_percentage', 'MAX', 'max_battery_percentage']
                 ['session_id', 'FIRST', 'session_id'], ['created_date', 'MAX', 'created_date'],
                 ['user_date', 'FIRST', 'user_date']]
-   arcpy.Statistics_analysis(lyr, 'tmp_track_stats', [a[0:2] for a in line_flds], case_field="track_id")
+   tmp_track_stats = arcpy.env.scratchGDB + os.sep + "tmp_track_stats"
+   arcpy.Statistics_analysis(lyr, tmp_track_stats, [a[0:2] for a in line_flds], case_field="track_id")
    # Rename fields
    for f in line_flds:
-      arcpy.AlterField_management('tmp_track_stats', f[1] + '_' + f[0], f[2], clear_field_alias=True)
-   arcpy.AlterField_management('tmp_track_stats', 'FREQUENCY', 'count_')  # note: 'count' is a reserved field name on AGOL, that is why 'count_' is used.
+      arcpy.AlterField_management(tmp_track_stats, f[1] + '_' + f[0], f[2], clear_field_alias=True)
+   arcpy.AlterField_management(tmp_track_stats, 'FREQUENCY', 'count_')  # note: 'count' is a reserved field name on AGOL, that is why 'count_' is used.
    # Calculate duration and total distance
    dur = 'round((!end_time!.timestamp() - !start_time!.timestamp()) / 60, 2)'
-   arcpy.CalculateField_management('tmp_track_stats', 'duration_minutes', dur, field_type="FLOAT")
-   flds = [a.name for a in arcpy.ListFields('tmp_track_stats') if a.name not in ['OBJECTID', 'track_id']]
+   arcpy.CalculateField_management(tmp_track_stats, 'duration_minutes', dur, field_type="FLOAT")
+   flds = [a.name for a in arcpy.ListFields(tmp_track_stats) if a.name not in ['OBJECTID', 'track_id']]
    if arcpy.GetCount_management(out_track_lines)[0] == '0':
       arcpy.AddMessage("No track lines generated, exiting.")
       return out_track_lines
-   JoinFast(out_track_lines, 'track_id', 'tmp_track_stats', 'track_id', flds)
+   JoinFast(out_track_lines, 'track_id', tmp_track_stats, 'track_id', flds)
    arcpy.CalculateGeometryAttributes_management(out_track_lines, "distance_covered_meters LENGTH_GEODESIC", "METERS")
    return out_track_lines
 
@@ -533,8 +539,15 @@ def main():
    "C:\Program Files\ArcGIS\Pro\bin\Python\Scripts\propy.bat" "C:\path_to\AGOLBackupTools\AGOLBackupTools_helper.py"
    
    The paths and URLs are all dummy values, and do not link to real data.
+   
+   You first need to set up a credentials text file, with only two lines (username and encoded password). Use:
+   credEncode("MY_PASSWORD")
+   to encode your password (b64). Note encoding avoids storing your password in plain text, but it can be easily 
+   decoded! Store the file in a secure location.
    """
-   loginAGOL()
+   
+   # Log in and import the toolbox
+   loginAGOL(credentials=r"path_to\agol_credentials.txt")
    arcpy.ImportToolbox(r'path_to\AGOLBackupTools.pyt')
 
    """
@@ -559,7 +572,7 @@ def main():
    lines layer.
    """
    web_pts = 'https://locationservices1.arcgis.com/points/FeatureServer/0'
-   bkp_pts = r'C:\path_to\backup.gdb\bkp_pts',
+   bkp_pts = r'C:\path_to\backup.gdb\bkp_pts'
    if not arcpy.Exists(bkp_pts):
       # Create new feature class backups for points and lines. The lines can then be shared to AGOL as a new feature service.
       bkp_lines = bkp_pts + '_lines'
