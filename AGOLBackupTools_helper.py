@@ -110,6 +110,7 @@ def GetFeatServAll(url, gdb, fc, oid_agol=True):
    :return: feature class
    """
    fcout = gdb + os.sep + fc
+   url = url.replace(" ", "")  # remove any spaces
    d = arcpy.Describe(url)
    oid_name = [f.name for f in arcpy.ListFields(url) if f.type == 'OID'][0]
    if d.datatype == 'Table':
@@ -178,7 +179,7 @@ def ArchiveServices(url_file, backup_folder, old_daily=10, old_monthly=12):
    # read urls
    file = open(url_file)
    urls0 = file.read().splitlines()
-   urls = [u for u in urls0 if u[0] != '#']
+   urls = [u.replace(" ", "") for u in urls0 if u[0] != '#']
    file.close()
 
    arcpy.env.maintainAttachments = False  # get relate tables also?

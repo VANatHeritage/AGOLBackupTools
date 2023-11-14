@@ -3,7 +3,7 @@ AGOLBackupTools python toolbox
 Author: David Bucklin
 Created on: 2021-01-26
 Version: ArcGIS Pro / Python 3.x
-Toolbox version: v0.2.2
+Toolbox version: v0.2.3
 Version date: 2023-11-14
 
 This python toolbox contains tools for copying and archiving feature services from ArcGIS online.
