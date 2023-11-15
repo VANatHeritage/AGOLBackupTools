@@ -4,16 +4,9 @@ Author: David Bucklin
 Created on: 2021-01-26
 Version: ArcGIS Pro / Python 3.x
 
-This script contains functions for copying/archiving feature services from ArcGIS online. The processes are imported
-by a python toolbox for use in ArcGIS Pro, but can also be used interactively in this script, which could be set up to
-run on a schedule (e.g. with Windows Task Scheduler).
-
-Main tools include:
-- GetFeatServAll: Copies one or more layers from a feature service to feature classes in a geodatabase.
-- ArchiveServices: Archives feature services listed as URLs in a text file, meant to be used to regularly to maintain
-   backups (one-per-day and one-per-month). Includes processes to delete backups older than specified limits.
-- ServToBkp: Compares a source feature service layer to an existing backup features service layer or feature class.
-   Using a date created field to find rows not present in the backup, copies the new rows from the source to the backup.
+This script contains functions for copying/archiving feature services from ArcGIS online. Tools for handling location
+ tracking data are also included. The processes are imported by a python toolbox for use in ArcGIS Pro, but can also 
+ be used interactively in this script, which could be set up to run on a schedule (e.g. with Windows Task Scheduler).
 
 NOTE: During download, some tables throw an ugly WARNING, starting with `syntax error, unexpected WORD_WORD, expecting
 SCAN_ATTR or SCAN_DATASET or SCAN_ERROR...`. This syntax error doesn't appear to affect the export of the data.
@@ -28,24 +21,37 @@ import time
 import numpy
 import base64
 
-def credEncode(string):
-   string_bytes = string.encode("ascii")
+def makeCredFile(file, username, password):
+   """
+   Make a new text file to store credentials
+   :param file: File path
+   :param username: AGOL username
+   :param password: AGOL password. Will store an encoded version of password.
+   :return: 
+   """
+   string_bytes = password.encode("ascii")
    base64_bytes = base64.b64encode(string_bytes)
    base64_string = base64_bytes.decode("ascii")
-   return base64_string
+   if os.path.exists(file):
+      os.remove(file)
+   with open(file, 'w') as f:
+      f.write(username)
+      f.write("\n")
+      f.write(base64_string)
+   print("Created credentials file " + file + ".")
+   return file
 
 def loginAGOL(user=None, credentials=None, portal=None):
    """
    Check if logged in, and if not, use username or credentials file to log in to an ArcGIS online portal
-   (e.g. ArcGIS Online). If not using a credentials file, will prompt for password.
-   :param user: User name for portal. Will be used (including prompt for password) if credentials are not supplied.
-   :param credentials: Credentials file, Text file with two lines: (1) username and (2) encoded password (see credEncode)
+   (e.g. ArcGIS Online). If you provide user only, will prompt for password.
+   :param user: Username for portal. Will be used (including prompt for password) if credentials are not supplied.
+   :param credentials: Credentials file, Text file with two lines: (1) username and (2) encoded password (see makeCredFile)
    :param portal: (optional) Portal webpage. Generally should not be used, as arcpy.GetActivePortalURL() will pull
    the default portal (i.e. ArcGIS online).
    :return: connection information
 
    Note: username is case-sensitive (even though logging in to AGOL a web browser is not!)
-   # coulddo: use OS-level authentication method from arcgis API for python?
    """
    if not portal:
       portal = arcpy.GetActivePortalURL()
@@ -55,23 +61,22 @@ def loginAGOL(user=None, credentials=None, portal=None):
          cred = [line.splitlines()[0] for line in f]
       print('Using credentials file to connect to `' + portal + '` with username `' + cred[0] + '`...')
       arcpy.SignInToPortal(portal, cred[0], password=base64.b64decode(cred[1]).decode("utf-8"))
-   while arcpy.GetPortalInfo()['organization'] == '' and ct < 5:
+   while arcpy.GetPortalInfo()['organization'] == '' and ct < 2:
       if user:
          print('Signing in with username `' + user + '`...')
          try:
             arcpy.SignInToPortal(portal, user, getpass.getpass("Password: ", False))
          except:
             ct += 1
-            print('Incorrect password, ' + str(5 - ct) + ' tries left.')
+            print('Incorrect password, ' + str(2 - ct) + ' tries left.')
       else:
          print("Need to provide username or credentials file.")
-         ct = 5
+         ct = 2
    if arcpy.GetPortalInfo()['organization'] == '':
       raise ValueError("Log-in failed.")
    else:
       print('Signed in to ' + arcpy.GetPortalInfo()['organization'] + '.')
    return arcpy.GetPortalInfo()['organization']
-
 
 def fieldMappings(lyr, oid_agol=True):
    """
@@ -101,40 +106,39 @@ def fieldMappings(lyr, oid_agol=True):
    return fms
 
 
-def GetFeatServAll(url, gdb, fc, oid_agol=True):
+def GetFeatServAll(service, gdb, fc, oid_agol=True):
    """Copy a feature service layer from ArcGIS Online to feature class.
-   :param url: Url of the feature service layer (including index number) to download
+   :param service: Feature service layer (if URL, include index number) to download
    :param gdb: Output geodatabase
    :param fc: Output feature class
    :param oid_agol: Whether to copy OBJECTID from AGOL to a new attribute, 'OBJECTID_AGOL'.
    :return: feature class
    """
    fcout = gdb + os.sep + fc
-   url = url.replace(" ", "")  # remove any spaces
-   d = arcpy.Describe(url)
-   oid_name = [f.name for f in arcpy.ListFields(url) if f.type == 'OID'][0]
+   d = arcpy.Describe(service)
+   oid_name = [f.name for f in arcpy.ListFields(service) if f.type == 'OID'][0]
    if d.datatype == 'Table':
-      lyr = arcpy.MakeTableView_management(url)
+      lyr = arcpy.MakeTableView_management(service)
       ctall = int(arcpy.GetCount_management(lyr)[0])
       arcpy.AddMessage('Getting ' + str(ctall) + ' rows...')
       fms = fieldMappings(lyr, oid_agol)
-      arcpy.ExportTable_conversion(url, fcout, field_mapping=fms.exportToString())
-      # arcpy.TableToTable_conversion(url, gdb, fc, field_mapping=fms.exportToString())
+      arcpy.ExportTable_conversion(service, fcout, field_mapping=fms.exportToString())
+      # arcpy.TableToTable_conversion(service, gdb, fc, field_mapping=fms.exportToString())
    else:
-      lyr = arcpy.MakeFeatureLayer_management(url)
+      lyr = arcpy.MakeFeatureLayer_management(service)
       ctall = int(arcpy.GetCount_management(lyr)[0])
       arcpy.AddMessage('Getting ' + str(ctall) + ' features...')
       fms = fieldMappings(lyr, oid_agol)
-      # arcpy.FeatureClassToFeatureClass_conversion(url, gdb, fc, field_mapping=fms.exportToString())
+      # arcpy.FeatureClassToFeatureClass_conversion(service, gdb, fc, field_mapping=fms.exportToString())
       oid_name = [f.name for f in arcpy.ListFields(lyr) if f.type == 'OID'][0]
-      arcpy.ExportFeatures_conversion(url, fcout, field_mapping=fms.exportToString())
+      arcpy.ExportFeatures_conversion(service, fcout, field_mapping=fms.exportToString())
    ctupd = int(arcpy.GetCount_management(fcout)[0])
    e = 1
    while ctupd < ctall:
       oidmax = max([o for o in arcpy.da.SearchCursor(fcout, "OBJECTID_AGOL")])[0]
       ctupd0 = int(arcpy.GetCount_management(fcout)[0])
       try:
-         arcpy.Append_management(url, fcout, expression=oid_name + " > " + str(oidmax), schema_type="NO_TEST", field_mapping=fms.exportToString())
+         arcpy.Append_management(service, fcout, expression=oid_name + " > " + str(oidmax), schema_type="NO_TEST", field_mapping=fms.exportToString())
       except:
          e += 1
          if e > 5:
@@ -179,7 +183,7 @@ def ArchiveServices(url_file, backup_folder, old_daily=10, old_monthly=12):
    # read urls
    file = open(url_file)
    urls0 = file.read().splitlines()
-   urls = [u.replace(" ", "") for u in urls0 if u[0] != '#']
+   urls = [u.replace(" ", "") for u in urls0 if u[0] != '#']  # correct URLs with extra space at end.
    file.close()
 
    arcpy.env.maintainAttachments = False  # get relate tables also?
@@ -236,9 +240,9 @@ def ArchiveServices(url_file, backup_folder, old_daily=10, old_monthly=12):
                arcpy.AddMessage('Deleted old daily archives in GDB: ' + nm_gdb)
          except:
             arcpy.AddMessage('Failed to delete old daily archives in GDB: ' + nm_gdb)
+      print('Done archiving services.')
    else:
       arcpy.AddMessage('No ArcGIS Online connection, are you logged in?')
-   print('Done archiving services.')
    return True
 
 
