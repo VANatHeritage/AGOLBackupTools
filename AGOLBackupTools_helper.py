@@ -545,21 +545,23 @@ def main():
    
    The paths and URLs are all dummy values, and do not link to real data.
    
-   You first need to set up a credentials text file, with only two lines (username and encoded password). Use:
-   credEncode("MY_PASSWORD")
-   to encode your password (b64). Note encoding avoids storing your password in plain text, but it can be easily 
-   decoded! Store the file in a secure location.
+   You first need to set up a credentials text file, with only two lines (username and encoded password). Note encoding 
+   avoids storing your password in plain text, but it could be easily decoded! Store the file in a secure location.
    """
+   # AGOL credentials file
+   cred_file = r"path_to\agol_credentials.txt"
+   # Run below once, to create the credentials file.
+   # makeCredFile(cred_file, "USERNAME", "PASSWORD")
    
    # Log in and import the toolbox
-   loginAGOL(credentials=r"path_to\agol_credentials.txt")
+   loginAGOL(credentials=cred_file)
    arcpy.ImportToolbox(r'path_to\AGOLBackupTools.pyt')
 
    """
    Example feature services archive procedure.
    """
-   backup_folder = r"C:\path_to\backup_folder"
-   url_file = r'C:\path_to\urls.txt'  # simple text file with one URL per line. Lines starting with "#" are ignored.
+   backup_folder = r"path_to\backup_folder"
+   url_file = r'path_to\urls.txt'  # simple text file with one feature service URL per line. Lines starting with "#" are ignored.
    ArchiveServices(url_file, backup_folder, old_daily=10, old_monthly=12)
 
    """
@@ -567,7 +569,7 @@ def main():
    frequently added, and the data is not manually edited after it is added (e.g. location tracking data).
    """
    from_data = 'https://locationservices1.arcgis.com/points/FeatureServer/0'
-   to_data = r'C:\path_to\backup'
+   to_data = r'path_to\backup'
    ServToBkp(from_data, to_data, created_date_field="created_date")
 
    """
@@ -577,7 +579,7 @@ def main():
    lines layer.
    """
    web_pts = 'https://locationservices1.arcgis.com/points/FeatureServer/0'
-   bkp_pts = r'C:\path_to\backup.gdb\bkp_pts'
+   bkp_pts = r'path_to\backup.gdb\bkp_pts'
    if not arcpy.Exists(bkp_pts):
       # Create new feature class backups for points and lines. The lines can then be shared to AGOL as a new feature service.
       bkp_lines = bkp_pts + '_lines'
