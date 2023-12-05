@@ -263,8 +263,10 @@ def ServToBkp(from_data, to_data, created_date_field="created_date", append_data
    d1 = arcpy.Describe(from_data)
    d2 = arcpy.Describe(to_data)
    if d1.datatype != d2.datatype:
-      msg = "Datasets are not the same data type (" + d1.datatype + ", " + d2.datatype + ")."
-      raise ValueError(msg)
+      # Make exception for feature class / feature layer.
+      if not (d1.datatype.startswith("Feature") and d1.datatype.startswith("Feature")):
+         msg = "Datasets are not the same data type (" + d1.datatype + ", " + d2.datatype + ")."
+         raise ValueError(msg)
    if d1.shapeType != d2.shapeType:
       msg = "Datasets are not the same shape type (" + d1.shapeType + ", " + d2.shapeType + ")."
       raise ValueError(msg)
